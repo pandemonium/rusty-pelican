@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::io::{Error};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ErrorPrefix {
     Empty, Err,
     Named(String),
@@ -16,7 +16,7 @@ impl ErrorPrefix {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     SimpleString(String),
     Error { prefix: ErrorPrefix, message: String },
@@ -36,11 +36,7 @@ impl FromStr for Value {
 
 impl Value {
     fn make_array(xs: Vec<Value>) -> Self {
-        if xs.is_empty() {
-            Value::Nil
-        } else {
-            Value::Array(xs)
-        }
+        Value::Array(xs)
     }
 
     fn make_bulk_string(size: i32, text: &str) -> Self {
@@ -99,6 +95,8 @@ mod parser {
                 Error::new(ErrorKind::InvalidInput, e.to_string())
             }
 
+            /* This isn't very good because it'll always "parse". Some
+               lines are the BulkString data. */
             match prefix {
                 "+" => Token::trivial(Value::SimpleString(suffix.to_string())),
                 "-" => Token::trivial(Value::make_error(suffix)),
@@ -177,5 +175,139 @@ mod parser {
               .map(|s| s.parse())
               .collect::<Result<Vec<Token>, Error>>()
               .and_then(|input| parse_value(input.as_slice()).0)  /* Is it a failure if there's text left? */
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_string() {
+        assert_eq!(
+            "+OK\r\n".parse::<Value>().unwrap(),
+            Value::SimpleString("OK".to_string()), 
+        )
+    }
+
+    #[test]
+    fn errors() {
+        assert_eq!(
+            "-Error message\r\n".parse::<Value>().unwrap(),
+            Value::Error {
+                prefix: ErrorPrefix::Named("Error".to_string()), 
+                message: "message".to_string()
+            }
+        );
+        assert_eq!(
+            "-WRONGTYPE Operation against a key holding the wrong kind of value".parse::<Value>().unwrap(),
+            Value::Error {
+                prefix: ErrorPrefix::Named("WRONGTYPE".to_string()), 
+                message: "Operation against a key holding the wrong kind of value".to_string()
+            }
+        );
+        assert_eq!(
+            "-ERR unknown command 'helloworld'".parse::<Value>().unwrap(),
+            Value::Error {
+                prefix: ErrorPrefix::Err,
+                message: "unknown command 'helloworld'".to_string()
+            }
+        );
+        assert_eq!(
+            "-ERR".parse::<Value>().unwrap(),
+            Value::Error { prefix: ErrorPrefix::Empty, message: "ERR".to_string() }
+        )
+    }
+
+    #[test]
+    fn integers() {
+        assert_eq!(
+            ":0\r\n".parse::<Value>().unwrap(),
+            Value::Integer(0),
+        );
+        assert_eq!(
+            ":1234130\r\n".parse::<Value>().unwrap(),
+            Value::Integer(1234130),
+        );
+    }
+
+    #[test]
+    fn bulk_strings() {
+        assert_eq!(
+            "$5\r\nhello\r\n".parse::<Value>().unwrap(),
+            Value::BulkString("hello".to_string()),
+        );
+        /* Fails from broken handling of BulkStrings. */
+        assert_eq!(
+            "$5\r\n$hell\r\n".parse::<Value>().unwrap(),
+            Value::BulkString("$hell".to_string()),
+        );
+        assert_eq!(
+            "$0\r\n\r\n".parse::<Value>().unwrap(),
+            Value::BulkString("".to_string()),
+        );
+        assert_eq!(
+            "$-1\r\n".parse::<Value>().unwrap(),
+            Value::Nil,
+        );
+    }
+
+    #[test]
+    fn arrays() {
+        assert_eq!(
+            "*0\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![]),
+        );
+        assert_eq!(
+            "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![
+                Value::BulkString("hello".to_string()),
+                Value::BulkString("world".to_string()),
+            ]),
+        );
+        assert_eq!(
+            "*3\r\n:1\r\n:2\r\n:3\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3),
+            ]),
+        );
+        assert_eq!(
+            "*5\r\n:1\r\n:2\r\n:3\r\n:4\r\n$5\r\nhello\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![
+                Value::Integer(1),
+                Value::Integer(2),
+                Value::Integer(3),
+                Value::Integer(4),
+                Value::BulkString("hello".to_string()),
+            ]),
+        );
+        assert_eq!(
+            "*-1\r\n".parse::<Value>().unwrap(),
+            Value::Nil,
+        );
+        assert_eq!(
+            "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Hello\r\n-World\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![
+                Value::Array(vec![
+                    Value::Integer(1),
+                    Value::Integer(2),
+                    Value::Integer(3),
+                ]),
+                Value::Array(vec![
+                    Value::SimpleString("Hello".to_string()),
+                    Value::Error { prefix: ErrorPrefix::Empty, message: "World".to_string() }
+                ])                
+            ]),
+        );
+        assert_eq!(
+            "*3\r\n$5\r\nhello\r\n$-1\r\n$5\r\nworld\r\n".parse::<Value>().unwrap(),
+            Value::Array(vec![
+                Value::BulkString("hello".to_string()),
+                Value::Nil,
+                Value::BulkString("world".to_string()),
+            ]),
+        );
     }
 }
