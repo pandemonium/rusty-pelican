@@ -77,6 +77,7 @@ impl Value {
 
 mod parser {
     use super::Value;
+    use std::num::ParseIntError;
     use std::str::FromStr;
     use std::io::{Error, ErrorKind};
 
@@ -93,27 +94,31 @@ mod parser {
             Ok(Token::Trivial(v))
         }
 
-        fn read(line: &str) -> Result<Token, Error> {
-            /* Assumptions made. */
-            let prefix = &line[0..1];
-            let suffix = &line[1..];
+        fn produce(prefix: &str, suffix: &str) -> Result<Token, Error> {
+            fn as_invalid_input(e: ParseIntError) -> Error {
+                Error::new(ErrorKind::InvalidInput, e.to_string())
+            }
 
             match prefix {
                 "+" => Token::trivial(Value::SimpleString(suffix.to_string())),
                 "-" => Token::trivial(Value::make_error(suffix)),
-                ":" => suffix.parse()
-                             .map(|v| Token::Trivial(Value::Integer(v)))
-                             /* Do something. */
-                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
-                "*" => suffix.parse()
-                             .map(Token::Array)
-                             /* Do something. */
-                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
-                "$" => suffix.parse()
-                             .map(Token::BulkString)
-                             /* Do something. */
-                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
-                _   => Ok(Token::Literal(line.to_string())),
+                ":" => suffix.parse().map(|v| Token::Trivial(Value::Integer(v)))
+                             .map_err(as_invalid_input),
+                "*" => suffix.parse().map(Token::Array)
+                             .map_err(as_invalid_input),
+                "$" => suffix.parse().map(Token::BulkString)
+                             .map_err(as_invalid_input),
+                _   => Ok(Token::Literal(format!("{}{}", prefix, suffix).to_string())),
+            }            
+        }
+
+        fn read(line: &str) -> Result<Token, Error> {
+            if line.len() > 0 {
+                let prefix = &line[0..1];
+                let suffix = &line[1..];
+                Token::produce(prefix, suffix)
+            } else {
+                Ok(Token::Literal("".to_string()))
             }
         }
     }
@@ -151,11 +156,15 @@ mod parser {
                 (Ok(value.clone()), tail),
             [Token::BulkString(size), Token::Literal(text), tail @ ..] => 
                 (Ok(Value::make_bulk_string(*size, text)), tail),
-            [Token::Array(length), tail @ ..] => {
+            [Token::BulkString(size), tail @ ..] if *size == -1 => 
+                (Ok(Value::Nil), tail),
+            [Token::Array(length), tail @ ..] if *length > -1 => {
                 let mut elements = Vec::with_capacity(*length as usize);
                 let remaining = parse_array(*length, tail, &mut elements);
                 (Ok(Value::make_array(elements)), remaining)
             },
+            [Token::Array(_), tail @ ..] =>
+                (Ok(Value::Nil), tail),
             _ => {
                 let message = format!("Will not parse token stream: {:?}", input);
                 (Err(Error::new(ErrorKind::InvalidData, message)), input)
@@ -165,7 +174,6 @@ mod parser {
 
     pub fn parse_value_phrase(phrase: &str) -> Result<Value, Error> {
         phrase.split("\r\n")
-              .filter(|s| !s.trim().is_empty())
               .map(|s| s.parse())
               .collect::<Result<Vec<Token>, Error>>()
               .and_then(|input| parse_value(input.as_slice()).0)  /* Is it a failure if there's text left? */
