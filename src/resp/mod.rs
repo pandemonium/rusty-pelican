@@ -1,3 +1,6 @@
+use std::str::FromStr;
+use std::io::{Error};
+
 #[derive(Clone, Debug)]
 pub enum ErrorPrefix {
     Empty, Err,
@@ -21,6 +24,14 @@ pub enum Value {
     BulkString(String),
     Array(Vec<Value>),
     Nil,
+}
+
+impl FromStr for Value {
+    type Err = Error;
+
+    fn from_str(phrase: &str) -> Result<Self, Self::Err> {
+        parser::parse_value_phrase(phrase)
+    }
 }
 
 impl Value {
@@ -62,15 +73,14 @@ impl Value {
               .collect()            
         )
     }
-
-    pub fn read(source: &str) -> Option<Value> {
-        parser::read_value(source)
-    }
 }
 
 mod parser {
     use super::Value;
+    use std::str::FromStr;
+    use std::io::{Error, ErrorKind};
 
+    #[derive(Debug)]
     enum Token {
         Literal(String),
         Trivial(Value),
@@ -79,26 +89,40 @@ mod parser {
     }
 
     impl Token {
-        fn trivial(v: Value) -> Option<Token> {
-            Some(Token::Trivial(v))
+        fn trivial(v: Value) -> Result<Token, Error> {
+            Ok(Token::Trivial(v))
         }
 
-        fn produce(prefix: &str, suffix: &str) -> Option<Token> {
+        fn read(line: &str) -> Result<Token, Error> {
+            /* Assumptions made. */
+            let prefix = &line[0..1];
+            let suffix = &line[1..];
+
             match prefix {
-                "+"       => Token::trivial(Value::SimpleString(suffix.to_string())),
-                "-"       => Token::trivial(Value::make_error(suffix)),
-                ":"       => suffix.parse().ok().map(|v| Token::Trivial(Value::Integer(v))),
-                "*"       => suffix.parse().ok().map(Token::Array),
-                "$"       => suffix.parse().ok().map(Token::BulkString),
-                otherwise => None,
+                "+" => Token::trivial(Value::SimpleString(suffix.to_string())),
+                "-" => Token::trivial(Value::make_error(suffix)),
+                ":" => suffix.parse()
+                             .map(|v| Token::Trivial(Value::Integer(v)))
+                             /* Do something. */
+                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
+                "*" => suffix.parse()
+                             .map(Token::Array)
+                             /* Do something. */
+                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
+                "$" => suffix.parse()
+                             .map(Token::BulkString)
+                             /* Do something. */
+                             .map_err(|e| Error::new(ErrorKind::InvalidInput, e.to_string())),
+                _   => Ok(Token::Literal(line.to_string())),
             }
         }
+    }
 
-        fn read(line: &str) -> Option<Token> {
-            let head = &line[0..1];
-            let tail = &line[1..];
+    impl FromStr for Token {
+        type Err = Error;
 
-            Token::produce(head, tail)
+        fn from_str(image: &str) -> Result<Self, Self::Err> {
+            Token::read(image)
         }
     }
 
@@ -112,7 +136,7 @@ mod parser {
             input
         } else {
             match parse_value(input) {
-                (Some(element), remaining) => {
+                (Ok(element), remaining) => {
                     output.push(element);
                     parse_array(count - 1, remaining, output)
                 }
@@ -121,26 +145,29 @@ mod parser {
         }
     }
 
-    fn parse_value(input: &[Token]) -> (Option<Value>, &[Token]) {
+    fn parse_value(input: &[Token]) -> (Result<Value, Error>, &[Token]) {
         match input {
             [Token::Trivial(value), tail @ ..] =>
-                (Some(value.clone()), tail),
+                (Ok(value.clone()), tail),
             [Token::BulkString(size), Token::Literal(text), tail @ ..] => 
-                (Some(Value::make_bulk_string(*size, text)), tail),
+                (Ok(Value::make_bulk_string(*size, text)), tail),
             [Token::Array(length), tail @ ..] => {
                 let mut elements = Vec::with_capacity(*length as usize);
                 let remaining = parse_array(*length, tail, &mut elements);
-                (Some(Value::make_array(elements)), remaining)
+                (Ok(Value::make_array(elements)), remaining)
             },
-            diverged => 
-                (None, input),
+            _ => {
+                let message = format!("Will not parse token stream: {:?}", input);
+                (Err(Error::new(ErrorKind::InvalidData, message)), input)
+            },
         }
     }
 
-    pub fn read_value(text: &str) -> Option<Value> {
-        text.split("\r\n")
-            .map(Token::read)
-            .collect::<Option<Vec<Token>>>()
-            .and_then(|input| parse_value(input.as_slice()).0)
+    pub fn parse_value_phrase(phrase: &str) -> Result<Value, Error> {
+        phrase.split("\r\n")
+              .filter(|s| !s.trim().is_empty())
+              .map(|s| s.parse())
+              .collect::<Result<Vec<Token>, Error>>()
+              .and_then(|input| parse_value(input.as_slice()).0)  /* Is it a failure if there's text left? */
     }
 }
