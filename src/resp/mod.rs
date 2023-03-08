@@ -69,6 +69,27 @@ impl Value {
               .collect()            
         )
     }
+
+    fn try_as_bulk_string_content(&self) -> Option<&str> {
+        match self {
+            Value::BulkString(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn as_array_contents(&self) -> Option<&Vec<Value>> {
+        match self {
+            Value::Array(bs) => Some(bs),
+            _ => None,
+        }
+    }
+
+    pub fn try_as_bulk_array(&self) -> Option<Vec<&str>> {
+        self.as_array_contents()?
+            .into_iter()
+            .map(|v| v.try_as_bulk_string_content())
+            .collect()
+    }
 }
 
 mod parser {

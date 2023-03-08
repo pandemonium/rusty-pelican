@@ -1,0 +1,2 @@
+# Redis server
+Writing a Redis server as a hobby project to learn Rust. The ambition is to connect to it using Yedis - a Redis Client I wrote recently to learn Scala 3. The goal is to have a suite of integration tests exercising Yedis against the Redis server.

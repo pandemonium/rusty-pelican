@@ -1,4 +1,5 @@
 mod resp;
+mod command;
 use resp::*;
 
 fn main() {
@@ -7,5 +8,3 @@ fn main() {
 
     println!("Value read: {:?}", v)
 }
-
-// Write tests.
