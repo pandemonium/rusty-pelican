@@ -9,6 +9,19 @@ enum List {
     Push(String, Vec<String>),
 }
 
+#[derive(Debug, PartialEq)]
+enum Command {
+    List(List),
+}
+
+impl TryFrom<Value> for Command {
+    type Error = Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        List::try_from(value).map(Command::List)
+    }
+}
+
 impl TryFrom<Value> for List {
     type Error = Error;
 
@@ -28,10 +41,9 @@ impl TryFrom<Value> for List {
 
 #[cfg(test)]
 mod tests {
-    use crate::resp::*;
-    use super::List;
+    use super::*;
 
-    fn make_request(words: Vec<&str>) -> Value {
+    fn make_command(words: Vec<&str>) -> Value {
         Value::Array(
             words.iter().map(|s| Value::BulkString(s.to_string())).collect()
         )
@@ -40,12 +52,12 @@ mod tests {
     #[test]
     fn lists() {
         assert_eq!(
-            List::try_from(make_request(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
-            List::Push("mylist".to_string(), vec!["Kalle".to_string()]),
+            Command::try_from(make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
+            Command::List(List::Push("mylist".to_string(), vec!["Kalle".to_string()])),
         );
         assert_eq!(
-            List::try_from(make_request(vec!["LLEN", "mylist"])).unwrap(),
-            List::Length("mylist".to_string()),
+            Command::try_from(make_command(vec!["LLEN", "mylist"])).unwrap(),
+            Command::List(List::Length("mylist".to_string())),
         );
     }
 }

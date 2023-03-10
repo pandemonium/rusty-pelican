@@ -94,63 +94,75 @@ impl Value {
 
 mod parser {
     use super::Value;
-    use std::num::ParseIntError;
-    use std::str::FromStr;
     use std::io::{Error, ErrorKind};
 
     #[derive(Debug)]
     enum Token {
         Literal(String),
-        Trivial(Value),
-        BulkString(i32),
-        Array(i32),
+        Trivial { parsed: Value, image: String, },
+        BulkString { parsed: i32, image: String, },
+        Array { parsed: i32, image: String, },
     }
 
     impl Token {
-        fn trivial(v: Value) -> Result<Token, Error> {
-            Ok(Token::Trivial(v))
+        fn raw_image(&self) -> &str {
+            match self {
+                Token::Literal(image)                  => image,
+                Token::Trivial    { parsed: _, image } => image,
+                Token::BulkString { parsed: _, image } => image,
+                Token::Array      { parsed: _, image } => image,
+            }
         }
 
-        fn produce(prefix: &str, suffix: &str) -> Result<Token, Error> {
-            fn as_invalid_input(e: ParseIntError) -> Error {
-                Error::new(ErrorKind::InvalidInput, e.to_string())
-            }
-
-            /* This isn't very good because it'll always "parse". Some
-               lines are the BulkString data. */
+        fn produce(prefix: &str, suffix: &str, token_image: &str) -> Token {
+            /* The repetitions tickle my DRY nerves. Is this the way? */
             match prefix {
-                "+" => Token::trivial(Value::SimpleString(suffix.to_string())),
-                "-" => Token::trivial(Value::make_error(suffix)),
-                ":" => suffix.parse().map(|v| Token::Trivial(Value::Integer(v)))
-                             .map_err(as_invalid_input),
-                "*" => suffix.parse().map(Token::Array)
-                             .map_err(as_invalid_input),
-                "$" => suffix.parse().map(Token::BulkString)
-                             .map_err(as_invalid_input),
-                _   => Ok(Token::Literal(format!("{}{}", prefix, suffix).to_string())),
+                "+" => Token::Trivial { 
+                            parsed: Value::SimpleString(suffix.to_string()), 
+                            image: token_image.to_string(),
+                       },
+                "-" => Token::Trivial { 
+                            parsed: Value::make_error(suffix),
+                            image: token_image.to_string(),
+                       },
+                ":" => suffix.parse().map_or_else(
+                            |_| Token::Literal(token_image.to_string()),
+                            |v| Token::Trivial {
+                                    parsed: Value::Integer(v),
+                                    image: token_image.to_string(),
+                                }
+                       ),
+                "*" => suffix.parse().map_or_else(
+                            |_| Token::Literal(token_image.to_string()),
+                            |v| Token::Array {
+                                    parsed: v,
+                                    image: token_image.to_string(),
+                                }
+                       ),
+                "$" => suffix.parse().map_or_else(
+                            |_| Token::Literal(token_image.to_string()),
+                            |v| Token::BulkString {
+                                    parsed: v,
+                                    image: token_image.to_string(),
+                                }
+                       ),
+                _   => Token::Literal(token_image.to_string()),
             }            
         }
 
-        fn read(line: &str) -> Result<Token, Error> {
+        fn read(line: &str) -> Token {
             if line.len() > 0 {
                 let prefix = &line[0..1];
                 let suffix = &line[1..];
-                Token::produce(prefix, suffix)
+                Token::produce(prefix, suffix, line)
             } else {
-                Ok(Token::Literal("".to_string()))
+                Token::Literal("".to_string())
             }
-        }
-    }
-
-    impl FromStr for Token {
-        type Err = Error;
-
-        fn from_str(image: &str) -> Result<Self, Self::Err> {
-            Token::read(image)
         }
     }
 
     /* Should these functions be in impl Value? */
+    /* What about this lifetime thing? */
     fn parse_array<'a>(
         count:  i32, 
         input:  &'a [Token],
@@ -171,18 +183,18 @@ mod parser {
 
     fn parse_value(input: &[Token]) -> (Result<Value, Error>, &[Token]) {
         match input {
-            [Token::Trivial(value), tail @ ..] =>
-                (Ok(value.clone()), tail),
-            [Token::BulkString(size), Token::Literal(text), tail @ ..] => 
-                (Ok(Value::make_bulk_string(*size, text)), tail),
-            [Token::BulkString(size), tail @ ..] if *size == -1 => 
+            [Token::Trivial { parsed, image: _ }, tail @ ..] =>
+                (Ok(parsed. clone()), tail),
+            [Token::BulkString { parsed: size, image: _ }, tail @ ..] if *size == -1 => 
                 (Ok(Value::Nil), tail),
-            [Token::Array(length), tail @ ..] if *length > -1 => {
+            [Token::BulkString { parsed: size, image: _ }, contents, tail @ ..] =>
+                (Ok(Value::make_bulk_string(*size, contents.raw_image())), tail),
+            [Token::Array { parsed: length, image: _ }, tail @ ..] if *length > -1 => {
                 let mut elements = Vec::with_capacity(*length as usize);
                 let remaining = parse_array(*length, tail, &mut elements);
                 (Ok(Value::make_array(elements)), remaining)
             },
-            [Token::Array(_), tail @ ..] =>
+            [Token::Array { parsed: _, image: _ }, tail @ ..] =>
                 (Ok(Value::Nil), tail),
             _ => {
                 let message = format!("Will not parse token stream: {:?}", input);
@@ -192,10 +204,11 @@ mod parser {
     }
 
     pub fn parse_value_phrase(phrase: &str) -> Result<Value, Error> {
-        phrase.split("\r\n")
-              .map(|s| s.parse())
-              .collect::<Result<Vec<Token>, Error>>()
-              .and_then(|input| parse_value(input.as_slice()).0)  /* Is it a failure if there's text left? */
+        let tokens =
+            phrase.split("\r\n")
+                  .map(Token::read)
+                  .collect::<Vec<Token>>();
+        parse_value(tokens.as_slice()).0
     }
 }
 
@@ -204,7 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn simple_string() {
+    fn simple_strings() {
         assert_eq!(
             "+OK\r\n".parse::<Value>().unwrap(),
             Value::SimpleString("OK".to_string()), 
