@@ -4,13 +4,13 @@ use crate::resp::*;
 
 
 #[derive(Debug, PartialEq)]
-enum List {
+pub enum List {
     Length(String),
     Push(String, Vec<String>),
 }
 
 #[derive(Debug, PartialEq)]
-enum Command {
+pub enum Command {
     List(List),
 }
 
