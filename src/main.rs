@@ -1,11 +1,15 @@
 mod resp;
 mod commands;
 mod core;
-use resp::*;
 
-fn main() {
-    let source = "*3\r\n$5\r\nhello\r\n$-1\r\n$5\r\nworld\r\n";
-    let v = source.parse::<Value>();
+use std::io::Error;
 
-    println!("Value read: {:?}", v)
+use crate::core::*;
+use crate::core::server::*;
+
+
+fn main() -> Result<(), Error> {
+    let state = PersistentState::make();
+    let mut run_loop = RunLoop::make(state, "127.0.0.1:8080")?;
+    run_loop.execute()
 }

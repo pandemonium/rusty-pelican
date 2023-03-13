@@ -14,18 +14,18 @@ pub enum Command {
     List(List),
 }
 
-impl TryFrom<Value> for Command {
+impl TryFrom<Message> for Command {
     type Error = Error;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
         List::try_from(value).map(Command::List)
     }
 }
 
-impl TryFrom<Value> for List {
+impl TryFrom<Message> for List {
     type Error = Error;
 
-    fn try_from(value: Value) -> Result<Self, Self::Error> {
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
         match value.try_as_bulk_array().as_deref() {
             Some(["LPUSH", key, elements @ ..]) =>
                 Ok(List::Push(
@@ -43,9 +43,9 @@ impl TryFrom<Value> for List {
 mod tests {
     use super::*;
 
-    fn make_command(words: Vec<&str>) -> Value {
-        Value::Array(
-            words.iter().map(|s| Value::BulkString(s.to_string())).collect()
+    fn make_command(words: Vec<&str>) -> Message {
+        Message::Array(
+            words.iter().map(|s| Message::BulkString(s.to_string())).collect()
         )
     }
 
