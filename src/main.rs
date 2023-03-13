@@ -1,5 +1,5 @@
 mod resp;
-mod command;
+mod commands;
 mod core;
 use resp::*;
 

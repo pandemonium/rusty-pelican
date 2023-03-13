@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::io::{Error};
+use std::io::Error;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ErrorPrefix {

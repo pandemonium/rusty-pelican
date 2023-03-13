@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::Error;
 use std::path::Path;
 
-use crate::command::*;
+use crate::commands::*;
 use crate::resp::*;
 
 struct State {
@@ -54,7 +54,7 @@ trait Executive {
 impl Executive for State {
     fn apply(&mut self, command: Command) -> Result<Value, Error> {
         use datatype::List;
-        use crate::command::List as ListCommand;
+        use crate::commands::List as ListCommand;
 
         match command {
             /* I want a process_list function, but don't seem to be permitted one. */
