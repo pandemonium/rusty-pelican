@@ -75,7 +75,7 @@ impl Message {
         }
     }
 
-    fn make_error(line: &str) -> Self {
+    fn parse_error(line: &str) -> Self {
         if let Some(ix) = line.find(' ') {
             let (prefix, suffix) = line.split_at(ix);
             Message::Error {
@@ -121,7 +121,7 @@ impl Message {
 }
 
 pub mod parser {
-    use super::Message;
+    use super::*;
     use std::io::{Error, ErrorKind, BufReader, BufRead};
     use std::net::TcpStream;
 
@@ -138,26 +138,57 @@ pub mod parser {
             }
         }
 
-        /* Add more character_data; parse more tokens. */
-        pub fn read(&mut self, reader: &mut BufReader<&TcpStream>) {
-            let x =
-                reader.lines()
-                      .map(|x| x.map(|s| Token::read(s.as_str())))
-                      /* This call never terminates. Naturally. */
-                      .collect::<Result<Vec<Token>, Error>>();
+        fn add_token(&mut self, token: Token) {
+            self.tokens.push(token)
+        }
 
-            println!("read: Have `{:?}`.", x);
+        /* Will not terminate until it's read a complete Message.
+           Then why not simply return it immediately? */
+        pub fn read(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
+            let mut lines = reader.lines();
+            loop {
+                println!("read: Sitting here, waiting for the sun to come out.");
+                match lines.next() {
+                    Some(Ok(token_image)) => {
+                        let token = Token::read(token_image.as_str());
+                        self.add_token(token);
+                        match self.try_parse_message() {
+                            Some(message) => break Ok(message),
+                            None => (),
+                        }    
+                    },
+                    Some(Err(e)) => {
+                        break Err(e)
+                    },
+                    None => {
+                        println!("read: what's going on here?");
+                        break Err(Error::new(ErrorKind::Other, "Hmm?"))
+                    },
+                }
+            }
+        }
 
-            todo!()
+        pub fn as_unknown_command_error_message(&self) -> Message {
+            let text = format!("unknown command '{:?}'", self.tokens);
+            Message::Error { prefix: ErrorPrefix::Err, message: text, }
         }
 
         pub fn try_parse_message(&mut self) -> Option<Message> {
-            todo!()
+            match parser::parse_message(&self.tokens) {
+                (Ok(it), remaining) => {
+                    self.tokens = remaining.to_vec();
+                    Some(it)
+                },
+                otherwise => {
+                    println!("try_parse_message: {:?}", otherwise);
+                    None
+                },
+            }
         }
     }
 
-    #[derive(Debug)]
-    enum Token {
+    #[derive(Clone, Debug)]
+    pub enum Token {
         Literal(String),
         Trivial { parsed: Message, image: String, },
         BulkString { parsed: i32, image: String, },
@@ -182,7 +213,7 @@ pub mod parser {
                             image: token_image.to_string(),
                        },
                 "-" => Token::Trivial { 
-                            parsed: Message::make_error(suffix),
+                            parsed: Message::parse_error(suffix),
                             image: token_image.to_string(),
                        },
                 ":" => suffix.parse().map_or_else(
@@ -242,7 +273,7 @@ pub mod parser {
         }
     }
 
-    fn parse_message(input: &[Token]) -> (Result<Message, Error>, &[Token]) {
+    pub fn parse_message(input: &[Token]) -> (Result<Message, Error>, &[Token]) {
         match input {
             [Token::Trivial { parsed, image: _ }, tail @ ..] =>
                 (Ok(parsed. clone()), tail),
@@ -251,9 +282,15 @@ pub mod parser {
             [Token::BulkString { parsed: size, image: _ }, contents, tail @ ..] =>
                 (Ok(Message::make_bulk_string(*size, contents.raw_image())), tail),
             [Token::Array { parsed: length, image: _ }, tail @ ..] if *length > -1 => {
-                let mut elements = Vec::with_capacity(*length as usize);
+                let requested_length = *length as usize;
+                let mut elements = Vec::with_capacity(requested_length);
                 let remaining = parse_array(*length, tail, &mut elements);
-                (Ok(Message::make_array(elements)), remaining)
+
+                if elements.len() == requested_length {
+                    (Ok(Message::make_array(elements)), remaining)
+                } else {
+                    (Err(Error::new(ErrorKind::InvalidData, "Expected more array elements")), input)
+                }
             },
             [Token::Array { parsed: _, image: _ }, tail @ ..] =>
                 (Ok(Message::Nil), tail),

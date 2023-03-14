@@ -1,7 +1,12 @@
 use std::convert::TryFrom;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use crate::resp::*;
 
+
+#[derive(Debug, PartialEq)]
+pub enum Cmd {
+    Docs,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum List {
@@ -11,6 +16,7 @@ pub enum List {
 
 #[derive(Debug, PartialEq)]
 pub enum Command {
+    Cmd(Cmd),
     List(List),
 }
 
@@ -18,7 +24,8 @@ impl TryFrom<Message> for Command {
     type Error = Error;
 
     fn try_from(value: Message) -> Result<Self, Self::Error> {
-        List::try_from(value).map(Command::List)
+        List::try_from(value.clone()).map(Command::List)
+            .or(Cmd::try_from(value).map(Command::Cmd))
     }
 }
 
@@ -34,8 +41,26 @@ impl TryFrom<Message> for List {
                 )),
             Some(["LLEN", key]) =>
                 Ok(List::Length(key.to_string())),
-            _ => todo!(),
+            _ => 
+                Err(
+                    Error::new(ErrorKind::InvalidData, "Unknown or incomplete command.")
+                ),
         }
+    }
+}
+
+impl TryFrom<Message> for Cmd {
+    type Error = Error;
+
+    fn try_from(value: Message) -> Result<Self, Self::Error> {
+        match value.try_as_bulk_array().as_deref() {
+            Some(["COMMAND", "DOCS"]) =>
+                Ok(Cmd::Docs),
+            _ =>
+                Err(
+                    Error::new(ErrorKind::InvalidData, "Unknown or incomplete command.")
+                ),
+    }
     }
 }
 
