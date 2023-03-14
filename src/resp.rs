@@ -142,28 +142,22 @@ pub mod parser {
             self.tokens.push(token)
         }
 
-        /* Will not terminate until it's read a complete Message.
-           Then why not simply return it immediately? */
         pub fn read(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
             let mut lines = reader.lines();
             loop {
-                println!("read: Sitting here, waiting for the sun to come out.");
                 match lines.next() {
                     Some(Ok(token_image)) => {
-                        let token = Token::read(token_image.as_str());
+                        let token = Token::parse(token_image.as_str());
                         self.add_token(token);
                         match self.try_parse_message() {
                             Some(message) => break Ok(message),
                             None => (),
                         }    
                     },
-                    Some(Err(e)) => {
-                        break Err(e)
-                    },
-                    None => {
-                        println!("read: what's going on here?");
-                        break Err(Error::new(ErrorKind::Other, "Hmm?"))
-                    },
+                    Some(Err(e)) =>
+                        break Err(e),
+                    None =>
+                        break Err(Error::new(ErrorKind::UnexpectedEof, "Unexpected end of file.")),
                 }
             }
         }
@@ -179,10 +173,7 @@ pub mod parser {
                     self.tokens = remaining.to_vec();
                     Some(it)
                 },
-                otherwise => {
-                    println!("try_parse_message: {:?}", otherwise);
-                    None
-                },
+                _ => None,
             }
         }
     }
@@ -241,8 +232,7 @@ pub mod parser {
             }            
         }
 
-        fn read(line: &str) -> Token {
-            println!("Reading: {}", line);
+        fn parse(line: &str) -> Token {
             if line.len() > 0 {
                 let prefix = &line[0..1];
                 let suffix = &line[1..];
@@ -304,7 +294,7 @@ pub mod parser {
     pub fn parse_message_phrase(phrase: &str) -> Result<Message, Error> {
         let tokens =
             phrase.split("\r\n")
-                  .map(Token::read)
+                  .map(Token::parse)
                   .collect::<Vec<Token>>();
         parse_message(tokens.as_slice()).0
     }

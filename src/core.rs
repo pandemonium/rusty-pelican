@@ -25,16 +25,16 @@ impl PersistentState {
 
 mod datatype {
     pub trait List {
-        fn push(&mut self, key: &str, element: &str) -> usize;
+        fn prepend(&mut self, key: &str, element: &str) -> usize;
         fn length(&self, key: &str) -> usize;
     }
 }
 
 impl datatype::List for PersistentState {
-    fn push(&mut self, key: &str, element: &str) -> usize {
+    fn prepend(&mut self, key: &str, element: &str) -> usize {
         self.lists
             .entry(key.to_string())
-            .and_modify(|xs| xs.push(element.to_string()))
+            .and_modify(|xs| xs.insert(0, element.to_string()))
             .or_insert(vec![element.to_string()]);
         self.length(key)
     }
@@ -55,7 +55,7 @@ impl Executive for PersistentState {
     fn apply(&mut self, command: Command) -> Result<Message, Error> {
         use datatype::List;
         use crate::commands::List as ListCommand;
-        use crate::commands::Cmd as CmdCommand;
+        use crate::commands::Introspection as CmdCommand;
 
         match command {
             /* I want a process_list function, but don't seem to be permitted one. */
@@ -63,17 +63,18 @@ impl Executive for PersistentState {
                 let return_value = self.length(key.as_str());
                 Ok(Message::Integer(return_value as i64))
             },
-            Command::List(ListCommand::Push(key, elements)) => {
+            Command::List(ListCommand::Prepend(key, elements)) => {
                 let mut return_value = 0;
                 for element in elements {
-                    return_value = self.push(key.as_str(), element.as_str());
+                    return_value = self.prepend(key.as_str(), element.as_str());
                 };
                 Ok(Message::Integer(return_value as i64))
             },
-            Command::Cmd(CmdCommand::Docs) => {
-                Ok(
-                    Message::Error { prefix: ErrorPrefix::Err, message: "unknown command".to_string() }
-                )
+            Command::Introspection(CmdCommand::Docs) => {
+                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
+            },
+            Command::Introspection(CmdCommand::Empty) => {
+                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
             },
         }
     }
@@ -104,11 +105,9 @@ pub mod server {
         pub fn execute(&mut self) -> Result<(), Error> {
             let server = self.server_socket.try_clone()?; /* Haha. */
             for connection in server.incoming() {
-                println!("New connection.");
                 match connection {
                     Ok(socket) => {
                         self.handle_connection(&socket);
-                        println!("execute: handle_connection")
                     },
                     Err(e) => println!("execute: Error `{}`.", e),
                 }
@@ -120,29 +119,27 @@ pub mod server {
             let mut reader = BufReader::new(connection);
             let mut writer = BufWriter::new(connection);
             let mut request = RequestState::make();
-//            loop {
+
+            /* Clean up this mess. Replace with ?-syntax. */
+            loop {
                 match request.read(&mut reader) {
                     Ok(message) =>
                         match self.handle_request(message, &mut writer) {
-                            Ok(_) => println!("handle_connection: Great success."),
+                            Ok(_) => (),
                             Err(e) => println!("handle_connection: Error `{}`.", e),
                         },
                     Err(_) => {
                         let message = request.as_unknown_command_error_message();
-                        println!("handle_connecion: what, what?");
                         match writer.write_all(String::from(message).as_bytes()) {
                             Ok(_) => (),
                             Err(e) => println!("handle_connection: Error responding with error `{}`.", e),
                         }
-//                        break;
+                        break;
                     },
                 }                
-  //          }
+            }
 
         }
-
-//        Error: Protocol error, got "\r" as reply type byte
-
 
         fn handle_request<A: Write>(
             &mut self,
@@ -152,7 +149,7 @@ pub mod server {
             let command = Command::try_from(request)?;
             let response = self.state.apply(command)?;
             println!("handle_request: respond with `{:?}`.", response);
-            out.write_all(String::from(response).as_bytes());
+            out.write_all(String::from(response).as_bytes())?;
             out.flush()
         }
     }
