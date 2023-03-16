@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Error;
 use std::path::Path;
+use std::cmp;
 
 use crate::commands::*;
 use crate::resp::*;
@@ -18,19 +19,64 @@ impl PersistentState {
         }
     }
 
-    fn restore_from_disk(home: &Path) -> Option<Self> {
-        todo!()
+    pub fn restore_from_disk(&mut self, home: &Path) -> Result<(), Error> {
+        println!("Loading transaction log.");
+        Ok(())
     }
 }
 
+mod schema {
+    pub trait Schema {
+        fn keys(&self, pattern: &str) -> Vec<String>;
+    }
+}
+
+/* mkdir datatype, copy all list stuff into lists.rs, etc. */
 mod datatype {
     pub trait List {
+        fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
+        fn append(&mut self, key: &str, element: &str) -> usize;
         fn prepend(&mut self, key: &str, element: &str) -> usize;
         fn length(&self, key: &str) -> usize;
     }
 }
 
+impl schema::Schema for PersistentState {
+    fn keys(&self, pattern: &str) -> Vec<String> {
+        self.strings.keys()
+            .chain(self.lists.keys())
+            .filter_map(|s| /* Eval glob pattern. */ Some(s.to_string()))
+            .collect()
+    }
+}
+
 impl datatype::List for PersistentState {
+    fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String> {
+        let length = self.length(key) as i32;
+        if start >= length {
+            vec![]
+        } else {
+            /* Indices don't wrap around. So an effective stop left of start ranges
+               over an empty list. */
+            let effective_start = ((start + length) % length) as usize;
+            let effective_stop = cmp::min(stop, length) as usize;
+
+            if effective_start <= effective_stop {
+                self.lists[key][effective_start..effective_stop].to_vec()
+            } else {
+                self.lists[key][effective_stop..length as usize].to_vec()
+            }
+        }
+    }
+
+    fn append(&mut self, key: &str, element: &str) -> usize {
+        self.lists
+            .entry(key.to_string())
+            .and_modify(|xs| xs.push(element.to_string()))
+            .or_insert(vec![element.to_string()]);
+        self.length(key)
+    }
+
     fn prepend(&mut self, key: &str, element: &str) -> usize {
         self.lists
             .entry(key.to_string())
@@ -53,14 +99,31 @@ trait Executive {
 /* The default Command Processor. */
 impl Executive for PersistentState {
     fn apply(&mut self, command: Command) -> Result<Message, Error> {
+        use schema::Schema;
         use datatype::List;
         use crate::commands::List as ListCommand;
-        use crate::commands::Introspection as CmdCommand;
+        use crate::commands::Schema as SchemaCommand;
 
+        /* This needs to be split into several sub-groups. */
         match command {
             /* I want a process_list function, but don't seem to be permitted one. */
+            Command::List(ListCommand::Range(key, start, stop)) => {
+                let elements =
+                    self.range(key.as_str(), start, stop)
+                        .into_iter()
+                        .map(Message::BulkString)
+                        .collect();
+                Ok(Message::Array(elements))
+            },
             Command::List(ListCommand::Length(key)) => {
                 let return_value = self.length(key.as_str());
+                Ok(Message::Integer(return_value as i64))
+            },
+            Command::List(ListCommand::Append(key, elements)) => {
+                let mut return_value = 0;
+                for element in elements {
+                    return_value = self.append(key.as_str(), element.as_str());
+                };
                 Ok(Message::Integer(return_value as i64))
             },
             Command::List(ListCommand::Prepend(key, elements)) => {
@@ -70,10 +133,45 @@ impl Executive for PersistentState {
                 };
                 Ok(Message::Integer(return_value as i64))
             },
-            Command::Introspection(CmdCommand::Docs) => {
+            Command::Client(Client::SetName(name)) => {
+                println!("Executive::apply: Set client name {name}");
+                Ok(Message::SimpleString("OK".to_string()))
+            },
+            Command::Info(Info::Server) => {
+                println!("Executive::apply: Info about server");
                 Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
             },
-            Command::Introspection(CmdCommand::Empty) => {
+            Command::Info(Info::Keyspace) => {
+                println!("Executive::apply: Info about keyspace");
+                let keys = self.keys("*");
+                let keyspace = format!("# Keyspace\r\ndb0:keys={},expires=0,avg_ttl=0\r\n", keys.len());
+                Ok(Message::BulkString(keyspace))
+            },
+            Command::Info(Info::Category(name)) => {
+                println!("Executive::apply: Info about {name}");
+                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
+            },
+            Command::Other(Miscellaneous::Schema(SchemaCommand::Select(_))) => {
+                Ok(Message::SimpleString("OK".to_string()))
+            },
+            Command::Other(Miscellaneous::Schema(SchemaCommand::Keys(pattern))) => {
+                let keys =
+                    self.keys(pattern.as_str()).into_iter()
+                        .map(Message::BulkString)
+                        .collect();
+                Ok(Message::Array(keys))
+            },
+            Command::Other(Miscellaneous::Ping(message)) => {
+                Ok(Message::SimpleString(message))
+            },
+            Command::Other(Miscellaneous::Docs) => {
+                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
+            },
+            Command::Other(Miscellaneous::Empty) => {
+                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
+            },
+            Command::Other(Miscellaneous::Unknown(command)) => {
+                println!("Unknown command: {command}");
                 Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
             },
         }
@@ -106,10 +204,8 @@ pub mod server {
             let server = self.server_socket.try_clone()?; /* Haha. */
             for connection in server.incoming() {
                 match connection {
-                    Ok(socket) => {
-                        self.handle_connection(&socket);
-                    },
-                    Err(e) => println!("execute: Error `{}`.", e),
+                    Ok(socket) => self.handle_connection(&socket),
+                    Err(e)     => println!("execute: Error `{}`.", e),
                 }
             }
             Ok(())
@@ -148,7 +244,7 @@ pub mod server {
         ) -> Result<(), Error> {
             let command = Command::try_from(request)?;
             let response = self.state.apply(command)?;
-            println!("handle_request: respond with `{:?}`.", response);
+            println!("handle_request: responding with `{}`.", response);
             out.write_all(String::from(response).as_bytes())?;
             out.flush()
         }

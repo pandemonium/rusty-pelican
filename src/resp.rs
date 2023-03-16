@@ -1,5 +1,7 @@
+use std::fmt::Display;
 use std::str::FromStr;
 use std::io::Error;
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ErrorPrefix {
@@ -12,6 +14,16 @@ impl ErrorPrefix {
         match prefix {
             "ERR"     => ErrorPrefix::Err,
             otherwise => ErrorPrefix::Named(otherwise.to_string())
+        }
+    }
+}
+
+impl Display for ErrorPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => write!(f, ""),
+            Self::Err => write!(f, "ERR"),
+            Self::Named(name) => write!(f, "{name}"),
         }
     }
 }
@@ -36,6 +48,25 @@ pub enum Message {
     Nil,
 }
 
+impl Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Message::SimpleString(s) => write!(f, "{s}"),
+            Message::Error { prefix, message } => write!(f, "(error) {prefix} {message}."),
+            Message::Integer(i) => write!(f, "{i}"),
+            Message::BulkString(s) => write!(f, "{s}"),
+            Message::Array(xs) => {
+                for (x, i) in xs.into_iter().zip((0..).into_iter()) {
+                    write!(f, "({i}){x},")?
+                }
+                Ok(())  /* No other construct here? */
+            },
+            Message::Nil => write!(f, "(nul)"),
+        }
+    }
+}
+
+/* Type-alias String so that I can keep String for dumb purposes. */
 impl From<Message> for String {
     fn from(value: Message) -> Self {
         match value {
