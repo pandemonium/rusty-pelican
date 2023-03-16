@@ -56,9 +56,11 @@ impl Display for Message {
             Message::Integer(i) => write!(f, "{i}"),
             Message::BulkString(s) => write!(f, "{s}"),
             Message::Array(xs) => {
+                write!(f, "Array({}", xs.len())?;
                 for (x, i) in xs.into_iter().zip((0..).into_iter()) {
                     write!(f, "({i}){x},")?
                 }
+                write!(f, ")")?;
                 Ok(())  /* No other construct here? */
             },
             Message::Nil => write!(f, "(nul)"),
@@ -78,7 +80,7 @@ impl From<Message> for String {
             Message::BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s),
             Message::Array(elements) => {
                 let xs: Vec<String> = elements.into_iter().map(String::from).collect();
-                format!("*{}\r\n{}\r\n", xs.len(), xs.join("\r\n"))
+                format!("*{}\r\n{}", xs.len(), xs.join(""))
             },
             Message::Nil => "$-1\r\n".to_string(),
         }
@@ -178,7 +180,7 @@ pub mod parser {
             loop {
                 match lines.next() {
                     Some(Ok(token_image)) => {
-                        let token = Token::parse(token_image.as_str());
+                        let token = Token::parse(&token_image);
                         self.add_token(token);
                         match self.try_parse_message() {
                             Some(message) => break Ok(message),

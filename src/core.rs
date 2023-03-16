@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::cmp;
+use std::thread;
 
 use crate::commands::*;
 use crate::resp::*;
@@ -59,9 +60,12 @@ impl datatype::List for PersistentState {
             /* Indices don't wrap around. So an effective stop left of start ranges
                over an empty list. */
             let effective_start = ((start + length) % length) as usize;
-            let effective_stop = cmp::min(stop, length) as usize;
+
+            // This isn't quite correct, is it?
+            let effective_stop = ((stop + length) % length) as usize;
 
             if effective_start <= effective_stop {
+                // range end index 18446744073709551615 out of range for slice of length 7',
                 self.lists[key][effective_start..effective_stop].to_vec()
             } else {
                 self.lists[key][effective_stop..length as usize].to_vec()
@@ -93,12 +97,14 @@ impl datatype::List for PersistentState {
 
 trait Executive {
     /* Commands are generally not applicable to any data-type. */
-    fn apply(&mut self, command: Command) -> Result<Message, Error>;
+    fn apply(&self, command: Command) -> Result<Message, Error>;
 }
 
+use std::sync;
+
 /* The default Command Processor. */
-impl Executive for PersistentState {
-    fn apply(&mut self, command: Command) -> Result<Message, Error> {
+impl Executive for sync::Arc<sync::RwLock<PersistentState>> {
+    fn apply(&self, command: Command) -> Result<Message, Error> {
         use schema::Schema;
         use datatype::List;
         use crate::commands::List as ListCommand;
@@ -109,27 +115,38 @@ impl Executive for PersistentState {
             /* I want a process_list function, but don't seem to be permitted one. */
             Command::List(ListCommand::Range(key, start, stop)) => {
                 let elements =
-                    self.range(key.as_str(), start, stop)
+                    self.read()
+                        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                        .range(&key, start, stop)
                         .into_iter()
                         .map(Message::BulkString)
                         .collect();
                 Ok(Message::Array(elements))
             },
             Command::List(ListCommand::Length(key)) => {
-                let return_value = self.length(key.as_str());
+                let return_value = 
+                    self.read()
+                        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                        .length(&key);
                 Ok(Message::Integer(return_value as i64))
             },
             Command::List(ListCommand::Append(key, elements)) => {
                 let mut return_value = 0;
                 for element in elements {
-                    return_value = self.append(key.as_str(), element.as_str());
+                    return_value = 
+                        self.write()
+                            .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                            .append(&key, &element);
                 };
                 Ok(Message::Integer(return_value as i64))
             },
             Command::List(ListCommand::Prepend(key, elements)) => {
                 let mut return_value = 0;
                 for element in elements {
-                    return_value = self.prepend(key.as_str(), element.as_str());
+                    return_value = 
+                        self.write()
+                            .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                            .prepend(&key, &element);
                 };
                 Ok(Message::Integer(return_value as i64))
             },
@@ -139,11 +156,15 @@ impl Executive for PersistentState {
             },
             Command::Info(Info::Server) => {
                 println!("Executive::apply: Info about server");
-                Ok(Message::Error { prefix: ErrorPrefix::Err, message: "Unsupported command".to_string() })
+                let server_info = "# Server\r\nredis_version:7.0.9\r\n";
+                Ok(Message::BulkString(server_info.to_string()))
             },
             Command::Info(Info::Keyspace) => {
                 println!("Executive::apply: Info about keyspace");
-                let keys = self.keys("*");
+                let keys =
+                    self.read()
+                        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                        .keys("*");
                 let keyspace = format!("# Keyspace\r\ndb0:keys={},expires=0,avg_ttl=0\r\n", keys.len());
                 Ok(Message::BulkString(keyspace))
             },
@@ -156,10 +177,20 @@ impl Executive for PersistentState {
             },
             Command::Other(Miscellaneous::Schema(SchemaCommand::Keys(pattern))) => {
                 let keys =
-                    self.keys(pattern.as_str()).into_iter()
+                    self.read()
+                        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                        .keys(&pattern).into_iter()
                         .map(Message::BulkString)
                         .collect();
                 Ok(Message::Array(keys))
+            },
+            Command::Other(Miscellaneous::DbSize) => {
+                let keys =
+                    self.read()
+                        .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?
+                        .keys("*")
+                        .len();
+                Ok(Message::Integer(keys as i64))
             },
             Command::Other(Miscellaneous::Ping(message)) => {
                 Ok(Message::SimpleString(message))
@@ -185,9 +216,10 @@ pub mod server {
         net::{TcpListener, TcpStream},
     };
     use parser::*;
+    use std::sync;
 
     pub struct RunLoop {
-        state: PersistentState,
+        state: sync::Arc<sync::RwLock<PersistentState>>,
         server_socket: TcpListener,
     }
 
@@ -195,23 +227,30 @@ pub mod server {
         pub fn make(state: PersistentState, iface:  &str) -> Result<Self, Error> {
             let listener = TcpListener::bind(iface)?;
             Ok(Self {
-                state: state,
+                state: sync::Arc::new(sync::RwLock::new(state)),
                 server_socket: listener,
             })
         }
 
-        pub fn execute(&mut self) -> Result<(), Error> {
+        pub fn execute(&self) -> Result<(), Error> {
             let server = self.server_socket.try_clone()?; /* Haha. */
             for connection in server.incoming() {
+                let state = self.state.clone();
                 match connection {
-                    Ok(socket) => self.handle_connection(&socket),
-                    Err(e)     => println!("execute: Error `{}`.", e),
+                    Ok(socket) => {
+                        thread::spawn(move || Self::handle_connection(state, &socket));
+                        ()
+                    },
+                    Err(e) => println!("execute: Error `{}`.", e),
                 }
             }
             Ok(())
         }
 
-        fn handle_connection(&mut self, connection: &TcpStream) {
+        fn handle_connection(
+            state: sync::Arc<sync::RwLock<PersistentState>>,
+            connection: &TcpStream
+        ) {
             let mut reader = BufReader::new(connection);
             let mut writer = BufWriter::new(connection);
             let mut request = RequestState::make();
@@ -220,7 +259,7 @@ pub mod server {
             loop {
                 match request.read(&mut reader) {
                     Ok(message) =>
-                        match self.handle_request(message, &mut writer) {
+                        match Self::handle_request(&state, message, &mut writer) {
                             Ok(_) => (),
                             Err(e) => println!("handle_connection: Error `{}`.", e),
                         },
@@ -238,12 +277,12 @@ pub mod server {
         }
 
         fn handle_request<A: Write>(
-            &mut self,
+            state: &sync::Arc<sync::RwLock<PersistentState>>,
             request: Message, 
             out: &mut BufWriter<A>
         ) -> Result<(), Error> {
             let command = Command::try_from(request)?;
-            let response = self.state.apply(command)?;
+            let response = state.apply(command)?;
             println!("handle_request: responding with `{}`.", response);
             out.write_all(String::from(response).as_bytes())?;
             out.flush()

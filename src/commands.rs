@@ -27,6 +27,7 @@ pub enum Schema {
 pub enum Miscellaneous {
     Empty,
     Docs,
+    DbSize,
     Ping(String),
     Schema(Schema),
     Unknown(String),
@@ -143,7 +144,7 @@ impl TryFrom<Message> for Miscellaneous {
                 Ok(Miscellaneous::Schema(Schema::Select(index)))
             },
             Some(["DBSIZE"]) =>
-                Ok(Miscellaneous::Schema(Schema::Keys("*".to_string()))),
+                Ok(Miscellaneous::DbSize),
             Some(["KEYS", pattern]) =>
                 Ok(Miscellaneous::Schema(Schema::Keys(pattern.to_string()))),
             Some([unknown @ ..]) =>
