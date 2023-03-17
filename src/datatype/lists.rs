@@ -83,11 +83,10 @@ pub fn apply(
             Ok(Message::Integer(return_value as i64))
         },
         commands::ListVerb::Range(key, start, stop) =>
-            Ok(Message::Array(
+            Ok(Message::make_bulk_array(
                 state.for_reading()?
-                     .range(&key, start, stop).into_iter()
-                     .map(Message::BulkString)
-                     .collect()
+                     .range(&key, start, stop)
+                     .as_slice()
             )),
     }
 }

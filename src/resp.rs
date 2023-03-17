@@ -123,9 +123,9 @@ impl Message {
         }
     }
 
-    fn make_bulk_array(xs: &Vec<&str>) -> Self {
+    pub fn make_bulk_array(xs: &[String]) -> Self {
         Message::make_array(
-            xs.into_iter()
+            xs.iter()
               .map(|x| Message::BulkString(x.to_string()))
               .collect()            
         )

@@ -34,11 +34,8 @@ pub fn apply(
 )  -> Result<resp::Message, io::Error> {
     match command {
         commands::Generic::Keys(pattern) => 
-            Ok(Message::Array(
-                state.for_reading()?
-                    .keys(&pattern).into_iter()
-                    .map(Message::BulkString)
-                    .collect()
+            Ok(Message::make_bulk_array(
+                state.for_reading()?.keys(&pattern).as_slice()
             )),
         commands::Generic::Scan { cursor, pattern, count, tpe } => 
             todo!(),

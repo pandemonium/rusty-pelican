@@ -59,10 +59,10 @@ impl Executive for State {
             Command::ConnectionManagement(command) => connections::apply(self, command),
             Command::ServerManagement(command)     => server::apply(self, command),
             Command::Unknown(name) =>
-            Ok(Message::Error { 
-                prefix: ErrorPrefix::Err,
-                message: format!("Unsupported command string `{name}`."), 
-            }),
+                Ok(Message::Error { 
+                    prefix: ErrorPrefix::Err,
+                    message: format!("Unsupported command string `{name}`."), 
+                }),
         }
     }
 }
