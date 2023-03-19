@@ -159,20 +159,22 @@ pub mod parser {
     use std::net::TcpStream;
 
     pub struct RequestState {
-        remainder: String,
         tokens: Vec<Token>,
     }
 
     impl RequestState {
         pub fn make() -> Self {
             Self {
-                remainder: String::new(),
                 tokens: vec![],
             }
         }
 
         fn add_token(&mut self, token: Token) {
             self.tokens.push(token)
+        }
+
+        fn connection_was_reset<A>() -> Result<A, Error> {
+            Err(Error::new(ErrorKind::ConnectionReset, "Connection closed."))
         }
 
         pub fn read(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
@@ -184,13 +186,11 @@ pub mod parser {
                         self.add_token(token);
                         match self.try_parse_message() {
                             Some(message) => break Ok(message),
-                            None => (),
-                        }    
+                            None          => continue,
+                        }
                     },
-                    Some(Err(e)) =>
-                        break Err(e),
-                    None =>
-                        break Err(Error::new(ErrorKind::UnexpectedEof, "Unexpected end of file.")),
+                    Some(Err(e)) => break Err(e),
+                    None         => break Self::connection_was_reset(),
                 }
             }
         }

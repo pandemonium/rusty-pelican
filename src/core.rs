@@ -96,42 +96,25 @@ impl RunLoop {
         Ok(())
     }
 
-    fn handle_connection(state: &State,connection: &TcpStream) {
+    fn handle_connection(state: &State, connection: &TcpStream) -> Result<(), io::Error> {
         let mut reader = BufReader::new(connection);
         let mut writer = BufWriter::new(connection);
-        let mut request = RequestState::make();
-
-        /* Clean up this mess. Replace with ?-syntax. */
         loop {
-            match request.read(&mut reader) {
-                Ok(message) =>
-                    match Self::handle_request(&state, message, &mut writer) {
-                        Ok(_) => (),
-                        Err(e) => println!("handle_connection: Error `{}`.", e),
-                    },
-                Err(_) => {
-                    let message = request.as_unknown_command_error_message();
-                    match writer.write_all(String::from(message).as_bytes()) {
-                        Ok(_) => (),
-                        Err(e) => println!("handle_connection: Error responding with error `{}`.", e),
-                    }
-                    break;
-                },
-            }                
-        }
+            let response = Self::handle_request(state, &mut reader)?;
 
+            println!("handle_request: responding with `{}`.", response);
+            writer.write_all(String::from(response).as_bytes())?;
+            writer.flush()?  
+        }
     }
 
-    fn handle_request<A: Write>(
-        state: &State,
-        request: Message, 
-        out: &mut BufWriter<A>
-    ) -> Result<(), io::Error> {
-        let command = Command::try_from(request)?;
-        let response = state.apply(command)?;
-        println!("handle_request: responding with `{}`.", response);
-        out.write_all(String::from(response).as_bytes())?;
-        out.flush()
+    fn handle_request(state: &State, reader: &mut BufReader<&TcpStream>) -> Result<Message, io::Error> {
+        let mut request = RequestState::make();
+        request.read(reader).and_then(|message|
+            Command::try_from(message).and_then(|command| state.apply(command))
+        ).or_else(|_error| {
+            Ok::<Message, io::Error>(request.as_unknown_command_error_message())
+        })
     }
 }
 

@@ -19,6 +19,7 @@ impl List for core::PersistentState {
         if start >= length {
             vec![]
         } else {
+            // Division by zero on length == 0.
             let effective_start = ((start + length) % length) as usize;
             let effective_stop = if stop < 0 {
                 ((stop + length) % length + 1) as usize
@@ -84,9 +85,7 @@ pub fn apply(
         },
         commands::ListVerb::Range(key, start, stop) =>
             Ok(Message::make_bulk_array(
-                state.for_reading()?
-                     .range(&key, start, stop)
-                     .as_slice()
+                state.for_reading()?.range(&key, start, stop).as_slice()
             )),
     }
 }

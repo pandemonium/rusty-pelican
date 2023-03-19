@@ -37,7 +37,7 @@ pub fn apply(
             Ok(Message::make_bulk_array(
                 state.for_reading()?.keys(&pattern).as_slice()
             )),
-        commands::Generic::Scan { cursor, pattern, count, tpe } => 
+        commands::Generic::Scan { cursor: _, pattern: _, count: _, tpe: _ } => 
             todo!(),
     }
 }

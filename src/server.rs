@@ -13,7 +13,7 @@ pub fn apply(
             Ok(resp::Message::Integer(
                 state.for_reading()?.keys("*").len() as i64
             )),
-        commands::ServerManagement::Command(options) =>
+        commands::ServerManagement::Command(_options) =>
             Ok(resp::Message::Error {
                 prefix: resp::ErrorPrefix::Err,
                 message: "Unsupported command".to_string(),
