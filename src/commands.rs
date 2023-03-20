@@ -35,7 +35,7 @@ pub enum CommandOption {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum ListVerb {
+pub enum ListApi {
     Length(String),
     Append(String, Vec<String>),
     Prepend(String, Vec<String>),
@@ -43,11 +43,19 @@ pub enum ListVerb {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum StringsApi {
+    Set(String, String),
+    Get(String),
+    Mget(Vec<String>),
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Command {
     ConnectionManagement(ConnectionManagement),
     ServerManagement(ServerManagement),
     Generic(Generic),
-    Lists(ListVerb),
+    Lists(ListApi),
+    Strings(StringsApi),
     Unknown(String),
 }
 
@@ -77,7 +85,8 @@ impl TryFrom<Message> for Command {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         println!("Command: {command}");
-        ListVerb::try_from(command.clone()).map(Command::Lists)
+        ListApi::try_from(command.clone()).map(Command::Lists)
+            .or(StringsApi::try_from(command.clone()).map(Command::Strings))
             .or(ConnectionManagement::try_from(command.clone()).map(Command::ConnectionManagement))
             .or(ServerManagement::try_from(command.clone()).map(Command::ServerManagement))
             .or(Generic::try_from(command.clone()).map(Command::Generic))
@@ -124,7 +133,6 @@ impl TryFrom<Message> for ServerManagement {
 
 impl TryFrom<Message> for Generic {
     type Error = io::Error;
-
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["KEYS", pattern]) =>
@@ -133,35 +141,57 @@ impl TryFrom<Message> for Generic {
                 Ok(Generic::Scan {
                     cursor: Command::decode(cursor)?, pattern: None, count: None, tpe: None
                 }),
+            Some(["SCAN", cursor, "COUNT", count]) =>
+                Ok(Generic::Scan {
+                    cursor: Command::decode(cursor)?, 
+                    pattern: None, 
+                    count: Some(Command::decode(count)?),
+                    tpe: None,
+                }),
             _otherwise =>
                 Command::wrong_category(),
         }
     }
 }
 
-impl TryFrom<Message> for ListVerb {
+impl TryFrom<Message> for ListApi {
     type Error = io::Error;
-
     fn try_from(value: Message) -> Result<Self, Self::Error> {
         match value.try_as_bulk_array().as_deref() {
             Some(["LRANGE", key, start, stop]) =>
-                Ok(ListVerb::Range(
+                Ok(ListApi::Range(
                     key.to_string(), Command::decode(start)?, Command::decode(stop)?
                 )),
             Some(["RPUSH", key, elements @ ..]) =>
-                Ok(ListVerb::Append(
+                Ok(ListApi::Append(
                     key.to_string(),
                     /* Is this really the correct way? */
                     elements.to_vec().iter().map(|s| s.to_string()).collect(),
                 )),
             Some(["LPUSH", key, elements @ ..]) =>
-                Ok(ListVerb::Prepend(
+                Ok(ListApi::Prepend(
                     key.to_string(),
                     /* Is this really the correct way? */
                     elements.to_vec().iter().map(|s| s.to_string()).collect(),
                 )),
             Some(["LLEN", key]) =>
-                Ok(ListVerb::Length(key.to_string())),
+                Ok(ListApi::Length(key.to_string())),
+            _otherwise =>
+                Command::wrong_category(),
+        }
+    }
+}
+
+impl TryFrom<Message> for StringsApi {
+    type Error = io::Error;
+    fn try_from(command: Message) -> Result<Self, Self::Error> {
+        match command.try_as_bulk_array().as_deref() {
+            Some(["SET", key, value]) =>
+                Ok(StringsApi::Set(key.to_string(), value.to_string())),
+            Some(["GET", key]) =>
+                Ok(StringsApi::Get(key.to_string())),
+            Some(["MGET", keys @ ..]) =>
+                Ok(StringsApi::Mget(keys.to_vec().iter().map(|s| s.to_string()).collect())),
             _otherwise =>
                 Command::wrong_category(),
         }
@@ -183,11 +213,11 @@ mod tests {
     fn lists() {
         assert_eq!(
             Command::try_from(make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListVerb::Prepend("mylist".to_string(), vec!["Kalle".to_string()])),
+            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()])),
         );
         assert_eq!(
             Command::try_from(make_command(vec!["LLEN", "mylist"])).unwrap(),
-            Command::Lists(ListVerb::Length("mylist".to_string())),
+            Command::Lists(ListApi::Length("mylist".to_string())),
         );
     }
 }

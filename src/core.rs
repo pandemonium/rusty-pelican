@@ -55,6 +55,7 @@ impl Executive for State {
     fn apply(&self, command: Command) -> Result<Message, io::Error> {
         match command {
             Command::Lists(command)                => lists::apply(self, command),
+            Command::Strings(command)              => keyvalue::apply(self, command),
             Command::Generic(command)              => generic::apply(self, command),
             Command::ConnectionManagement(command) => connections::apply(self, command),
             Command::ServerManagement(command)     => server::apply(self, command),

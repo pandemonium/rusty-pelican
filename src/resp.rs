@@ -96,7 +96,7 @@ impl FromStr for Message {
 }
 
 impl Message {
-    fn make_array(xs: Vec<Message>) -> Self {
+    pub fn make_array(xs: Vec<Message>) -> Self {
         Message::Array(xs)
     }
 

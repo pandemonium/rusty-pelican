@@ -4,7 +4,6 @@ use std::cmp;
 use crate::commands;
 use crate::core;
 use crate::resp;
-use crate::resp::Message;
 
 pub trait List {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
@@ -57,34 +56,33 @@ impl List for core::PersistentState {
     }
 }
 
-
 pub fn apply(
     state:   &core::State, 
-    command: commands::ListVerb
+    command: commands::ListApi
 ) -> Result<resp::Message, io::Error> {
     match command {
-        commands::ListVerb::Length(key) =>
-            Ok(Message::Integer(
+        commands::ListApi::Length(key) =>
+            Ok(resp::Message::Integer(
                 state.for_writing()?.length(&key) as i64
             )),
-        commands::ListVerb::Append(key, elements) => {
+        commands::ListApi::Append(key, elements) => {
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
                 return_value = st.append(&key, &element)
             }
-            Ok(Message::Integer(return_value as i64))
+            Ok(resp::Message::Integer(return_value as i64))
         },
-        commands::ListVerb::Prepend(key, elements) => {
+        commands::ListApi::Prepend(key, elements) => {
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
                 return_value = st.prepend(&key, &element)
             }
-            Ok(Message::Integer(return_value as i64))
+            Ok(resp::Message::Integer(return_value as i64))
         },
-        commands::ListVerb::Range(key, start, stop) =>
-            Ok(Message::make_bulk_array(
+        commands::ListApi::Range(key, start, stop) =>
+            Ok(resp::Message::make_bulk_array(
                 state.for_reading()?.range(&key, start, stop).as_slice()
             )),
     }
