@@ -87,3 +87,59 @@ pub fn apply(
             )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::core;
+    use super::List;
+
+    #[test]
+    fn adding() {
+        let mut st = core::PersistentState::make();
+        assert_eq!(st.length("key"), 0);
+        st.append("key", "1");
+        st.append("key", "2");
+        st.prepend("key", "3");
+        assert_eq!(st.length("key"), 3);
+        assert_eq!(st.lists.len(), 1);
+        st.prepend("key2", "1");
+        st.append("key2", "2");
+        assert_eq!(st.length("key"), 3);
+        assert_eq!(st.length("key2"), 2);
+        assert_eq!(st.lists.len(), 2);
+        assert_eq!(st.lists.get("key"), Some(&vec![
+            "3".to_string(), "1".to_string(), "2".to_string()
+        ]));
+        assert_eq!(st.lists.get("key2"), Some(&vec![
+            "1".to_string(), "2".to_string()
+        ]));
+    }
+
+    #[test]
+    fn range() {
+        let mut st = core::PersistentState::make();
+        
+        for i in 1..10 {
+            st.append("key", &i.to_string());
+        }
+        assert_eq!(
+            st.range("key", 0, 100),
+            (1..10).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            st.range("key", 0, -1),
+            (1..10).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            st.range("key", 0, -2),
+            (1..9).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            st.range("key", 5, -2),
+            (6..9).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+        assert_eq!(st.range("key", 15, -2), Vec::<String>::new());
+        assert_eq!(st.range("key", 0, 1), vec!["1".to_string()]);
+        assert_eq!(st.range("key", 1, 1), Vec::<String>::new());
+    }
+}
