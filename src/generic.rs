@@ -68,9 +68,9 @@ impl Generic for core::DomainState {
     }
 
     fn keys(&self, _pattern: &str) -> Vec<String> {
-        self.as_ref().strings.keys()
-            .chain(self.as_ref().lists.keys())
-            .filter_map(|s| /* Eval glob pattern. */ Some(s.to_string()))
+        self.strings.keys()
+            .chain(self.lists.keys())
+            .filter_map(|s| /* FIXME! Eval glob pattern. */ Some(s.to_string()))
             .collect()
     }
 
@@ -81,9 +81,9 @@ impl Generic for core::DomainState {
         count: Option<usize>,
         _tpe: Option<&str>
     ) -> Scan {
-        let combined_size = self.as_ref().strings.len() + self.as_ref().lists.len();
+        let combined_size = self.strings.len() + self.lists.len();
         let count = count.unwrap_or(Scan::DEFAULT_CHUNK_SIZE);
-        let content = self.as_ref().strings.keys().chain(self.as_ref().lists.keys())
+        let content = self.strings.keys().chain(self.lists.keys())
                           .skip(cursor).take(count)
                           .filter_map(|s| /* Eval pattern glob. */ Some(s.as_str()))
                           .collect::<Vec<&str>>();

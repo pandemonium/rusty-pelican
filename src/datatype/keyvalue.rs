@@ -19,14 +19,14 @@ fn string_prefix(xs: &Vec<String>) -> String {
 
 impl KeyValue for core::DomainState {
     fn set(&mut self, key: &str, value: &str) {
-        self.as_mut().strings.insert(key.to_string(), value.to_string());
+        self.strings.insert(key.to_string(), value.to_string());
         self.expunge_expired(&time::Instant::now())
     }
 
     fn get(&self, key: &str) -> Result<String, io::Error> {
-        self.as_ref().strings
+        self.strings
             .get(key).map(|s| s.to_string())
-            .or_else(|| self.as_ref().lists.get(key).map(string_prefix))
+            .or_else(|| self.lists.get(key).map(string_prefix))
             .ok_or(io::Error::new(io::ErrorKind::NotFound, key))
     }
 
@@ -69,8 +69,8 @@ mod tests {
     fn set() {
         let mut st = core::DomainState::new(core::PersistentState::empty());
         st.set("apan:1", "value");
-        assert_eq!(st.as_ref().strings.get("apan:1"), Some(&"value".to_string()));
-        assert_eq!(st.as_ref().strings.len(), 1);
+        assert_eq!(st.strings.get("apan:1"), Some(&"value".to_string()));
+        assert_eq!(st.strings.len(), 1);
     }
 
     #[test]
@@ -88,11 +88,11 @@ mod tests {
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         st.set("apan:4", "something else");
-        st.as_mut().lists.insert("apan:5".to_string(), vec![
+        st.lists.insert("apan:5".to_string(), vec![
             "a value".to_string(),
             "two value".to_string(),
         ]);
-        assert_eq!(st.as_ref().strings.len(), 3);
+        assert_eq!(st.strings.len(), 3);
         assert_eq!(
             st.mget(vec!["apan:1", "apan:2", "apan:3", "apan:5"]),
             vec![

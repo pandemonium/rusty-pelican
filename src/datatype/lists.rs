@@ -28,7 +28,7 @@ impl List for core::DomainState {
             };
 
             if effective_start <= effective_stop {
-                self.as_ref().lists[key][effective_start..effective_stop].to_vec()
+                self.lists[key][effective_start..effective_stop].to_vec()
             } else {
                 vec![]
             }
@@ -36,7 +36,7 @@ impl List for core::DomainState {
     }
 
     fn append(&mut self, key: &str, element: &str) -> usize {
-        self.as_mut().lists
+        self.lists
             .entry(key.to_string())
             .and_modify(|xs| xs.push(element.to_string()))
             .or_insert(vec![element.to_string()]);
@@ -45,7 +45,7 @@ impl List for core::DomainState {
     }
 
     fn prepend(&mut self, key: &str, element: &str) -> usize {
-        self.as_mut().lists
+        self.lists
             .entry(key.to_string())
             .and_modify(|xs| xs.insert(0, element.to_string()))
             .or_insert(vec![element.to_string()]);
@@ -53,7 +53,7 @@ impl List for core::DomainState {
     }
 
     fn length(&self, key: &str) -> usize {
-        self.as_ref().lists
+        self.lists
             .get(key).map_or(0, |v| v.len())
     }
 }
@@ -104,16 +104,16 @@ mod tests {
         st.append("key", "2");
         st.prepend("key", "3");
         assert_eq!(st.length("key"), 3);
-        assert_eq!(st.as_ref().lists.len(), 1);
+        assert_eq!(st.lists.len(), 1);
         st.prepend("key2", "1");
         st.append("key2", "2");
         assert_eq!(st.length("key"), 3);
         assert_eq!(st.length("key2"), 2);
-        assert_eq!(st.as_ref().lists.len(), 2);
-        assert_eq!(st.as_ref().lists.get("key"), Some(&vec![
+        assert_eq!(st.lists.len(), 2);
+        assert_eq!(st.lists.get("key"), Some(&vec![
             "3".to_string(), "1".to_string(), "2".to_string()
         ]));
-        assert_eq!(st.as_ref().lists.get("key2"), Some(&vec![
+        assert_eq!(st.lists.get("key2"), Some(&vec![
             "1".to_string(), "2".to_string()
         ]));
     }

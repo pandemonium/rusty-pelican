@@ -1,5 +1,7 @@
 use std::hash;
 use std::collections;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::time;
 use std::fmt;
 
@@ -14,14 +16,15 @@ pub struct TtlWrapper<Underlying: Expungeable> {
     underlying: Underlying,
 }
 
-impl <A: Expungeable> AsRef<A> for TtlWrapper<A> {
-    fn as_ref(&self) -> &A {
+impl <A: Expungeable> Deref for TtlWrapper<A> {
+    type Target = A;
+    fn deref(&self) -> &Self::Target {
         &self.underlying
     }
 }
 
-impl <A: Expungeable> AsMut<A> for TtlWrapper<A> {
-    fn as_mut(&mut self) -> &mut A {
+impl <A: Expungeable> DerefMut for TtlWrapper<A> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.underlying
     }
 }
