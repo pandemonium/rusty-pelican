@@ -1,5 +1,6 @@
 use std::io;
 use std::cmp;
+use std::time;
 
 use crate::commands;
 use crate::core;
@@ -12,7 +13,7 @@ pub trait List {
     fn length(&self, key: &str) -> usize;
 }
 
-impl List for core::PersistentState {
+impl List for core::DomainState {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String> {
         let length = self.length(key) as i32;
         if start >= length {
@@ -27,7 +28,7 @@ impl List for core::PersistentState {
             };
 
             if effective_start <= effective_stop {
-                self.lists[key][effective_start..effective_stop].to_vec()
+                self.as_ref().lists[key][effective_start..effective_stop].to_vec()
             } else {
                 vec![]
             }
@@ -35,15 +36,16 @@ impl List for core::PersistentState {
     }
 
     fn append(&mut self, key: &str, element: &str) -> usize {
-        self.lists
+        self.as_mut().lists
             .entry(key.to_string())
             .and_modify(|xs| xs.push(element.to_string()))
             .or_insert(vec![element.to_string()]);
+        self.expunge_expired(&time::Instant::now());
         self.length(key)
     }
 
     fn prepend(&mut self, key: &str, element: &str) -> usize {
-        self.lists
+        self.as_mut().lists
             .entry(key.to_string())
             .and_modify(|xs| xs.insert(0, element.to_string()))
             .or_insert(vec![element.to_string()]);
@@ -51,13 +53,13 @@ impl List for core::PersistentState {
     }
 
     fn length(&self, key: &str) -> usize {
-        self.lists
+        self.as_ref().lists
             .get(key).map_or(0, |v| v.len())
     }
 }
 
 pub fn apply(
-    state:   &core::State, 
+    state:   &core::ServerState, 
     command: commands::ListApi
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -69,6 +71,7 @@ pub fn apply(
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
+                /* Remove deref_mut by AsMut:ing this shit. */
                 return_value = st.append(&key, &element)
             }
             Ok(resp::Message::Integer(return_value as i64))
@@ -95,29 +98,29 @@ mod tests {
 
     #[test]
     fn adding() {
-        let mut st = core::PersistentState::make();
+        let mut st = core::DomainState::new(core::PersistentState::empty());
         assert_eq!(st.length("key"), 0);
         st.append("key", "1");
         st.append("key", "2");
         st.prepend("key", "3");
         assert_eq!(st.length("key"), 3);
-        assert_eq!(st.lists.len(), 1);
+        assert_eq!(st.as_ref().lists.len(), 1);
         st.prepend("key2", "1");
         st.append("key2", "2");
         assert_eq!(st.length("key"), 3);
         assert_eq!(st.length("key2"), 2);
-        assert_eq!(st.lists.len(), 2);
-        assert_eq!(st.lists.get("key"), Some(&vec![
+        assert_eq!(st.as_ref().lists.len(), 2);
+        assert_eq!(st.as_ref().lists.get("key"), Some(&vec![
             "3".to_string(), "1".to_string(), "2".to_string()
         ]));
-        assert_eq!(st.lists.get("key2"), Some(&vec![
+        assert_eq!(st.as_ref().lists.get("key2"), Some(&vec![
             "1".to_string(), "2".to_string()
         ]));
     }
 
     #[test]
     fn range() {
-        let mut st = core::PersistentState::make();
+        let mut st = core::DomainState::new(core::PersistentState::empty());
         
         for i in 1..10 {
             st.append("key", &i.to_string());

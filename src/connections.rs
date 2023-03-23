@@ -5,7 +5,7 @@ use crate::resp;
 use crate::resp::Message;
 
 pub fn apply(
-    _state:  &core::State, 
+    _state:  &core::ServerState, 
     command: commands::ConnectionManagement
 ) -> Result<resp::Message, io::Error> {
     match command {

@@ -10,6 +10,7 @@ use crate::datatype::*;
 use crate::generic;
 use crate::connections;
 use crate::server;
+use crate::ttl;
 
 use std::{
     io::{prelude::*, BufReader, BufWriter},
@@ -17,28 +18,44 @@ use std::{
 };
 use parser::*;
 
-#[derive(Clone)]
-pub struct State(sync::Arc<sync::RwLock<PersistentState>>);
+pub type DomainState = ttl::TtlWrapper<PersistentState>;
 
-impl State {
-    pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<PersistentState>, io::Error> {
+#[derive(Clone)]
+pub struct ServerState(sync::Arc<sync::RwLock<DomainState>>);
+
+impl ServerState {
+    pub fn new(state: PersistentState) -> Self {
+        Self(sync::Arc::new(sync::RwLock::new(ttl::TtlWrapper::new(state))))
+    }
+
+    pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<DomainState>, io::Error> {
         self.0.read().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
-    pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<PersistentState>, io::Error> {
+    pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<DomainState>, io::Error> {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 }
 
+impl ttl::Expungeable for PersistentState {
+    type Key = String;
+    fn expunge(&mut self, id: &Self::Key) {
+        self.lists.remove(id);
+        self.strings.remove(id);
+    }
+}
+
 pub struct PersistentState {
-    pub lists:   HashMap<String, Vec<String>>,
+    pub lists:   HashMap<String, Vec<String>>,  /* Use a VecDeque instead of Vec. */
     pub strings: HashMap<String, String>,
 }
 
 impl PersistentState {
-    pub fn make() -> Self {
-        Self { lists: HashMap::new(),
-               strings: HashMap::new(), }
+    pub fn empty() -> Self {
+        Self { 
+            lists:   HashMap::new(),
+            strings: HashMap::new(), 
+        }
     }
 
     pub fn restore_from_disk(&mut self, _home: &Path) -> Result<(), io::Error> {
@@ -51,7 +68,7 @@ trait Executive {
     fn apply(&self, command: Command) -> Result<Message, io::Error>;
 }
 
-impl Executive for State {
+impl Executive for ServerState {
     fn apply(&self, command: Command) -> Result<Message, io::Error> {
         match command {
             Command::Lists(command)                => lists::apply(self, command),
@@ -69,21 +86,21 @@ impl Executive for State {
 }
 
 pub struct RunLoop {
-    state: State,
-    server_socket: TcpListener,
+    state:         ServerState,
+    socket_server: TcpListener,
 }
 
 impl RunLoop {
-    pub fn make(state: PersistentState, iface:  &str) -> Result<Self, io::Error> {
+    pub fn make(persistent: PersistentState, iface:  &str) -> Result<Self, io::Error> {
         let listener = TcpListener::bind(iface)?;
         Ok(Self {
-            state: State(sync::Arc::new(sync::RwLock::new(state))),
-            server_socket: listener,
+            state: ServerState::new(persistent),
+            socket_server: listener,
         })
     }
 
     pub fn execute(&self) -> Result<(), io::Error> {
-        let server = self.server_socket.try_clone()?;
+        let server = self.socket_server.try_clone()?;
         for connection in server.incoming() {
             let state = self.state.clone();
             match connection {
@@ -97,7 +114,7 @@ impl RunLoop {
         Ok(())
     }
 
-    fn handle_connection(state: &State, connection: &TcpStream) -> Result<(), io::Error> {
+    fn handle_connection(state: &ServerState, connection: &TcpStream) -> Result<(), io::Error> {
         let mut reader = BufReader::new(connection);
         let mut writer = BufWriter::new(connection);
         loop {
@@ -109,7 +126,7 @@ impl RunLoop {
         }
     }
 
-    fn handle_request(state: &State, reader: &mut BufReader<&TcpStream>) -> Result<Message, io::Error> {
+    fn handle_request(state: &ServerState, reader: &mut BufReader<&TcpStream>) -> Result<Message, io::Error> {
         let mut request = RequestState::make();
         request.read(reader).and_then(|message|
             Command::try_from(message).and_then(|command| state.apply(command))

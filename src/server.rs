@@ -2,10 +2,10 @@ use std::io;
 use crate::commands;
 use crate::core;
 use crate::resp;
-use crate::generic::Generic;
+use crate::generic::*;
 
 pub fn apply(
-    state:   &core::State, 
+    state:   &core::ServerState, 
     command: commands::ServerManagement
 ) -> Result<resp::Message, io::Error> {
     match command {

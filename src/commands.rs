@@ -22,6 +22,8 @@ pub enum Topic {
 
 #[derive(Debug, PartialEq)]
 pub enum Generic {
+    Ttl(String),
+    Expire(String, u64),
     Keys(String),
     Scan { cursor:  usize,
            pattern: Option<String>,
@@ -148,6 +150,10 @@ impl TryFrom<Message> for Generic {
                     count: Some(Command::decode(count)?),
                     tpe: None,
                 }),
+            Some(["TTL", key]) =>
+                Ok(Generic::Ttl(key.to_string())),
+            Some(["EXPIRE", key, ttl]) =>
+                Ok(Generic::Expire(key.to_string(), Command::decode(ttl)?)),
             _otherwise =>
                 Command::wrong_category(),
         }

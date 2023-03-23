@@ -3,6 +3,7 @@ use std::io;
 use crate::commands;
 use crate::core;
 use crate::resp;
+use std::time;
 
 pub trait KeyValue {
     fn set(&mut self, key: &str, value: &str);
@@ -16,15 +17,16 @@ fn string_prefix(xs: &Vec<String>) -> String {
       .join(",")
 }
 
-impl KeyValue for core::PersistentState {
+impl KeyValue for core::DomainState {
     fn set(&mut self, key: &str, value: &str) {
-        self.strings.insert(key.to_string(), value.to_string());
+        self.as_mut().strings.insert(key.to_string(), value.to_string());
+        self.expunge_expired(&time::Instant::now())
     }
 
     fn get(&self, key: &str) -> Result<String, io::Error> {
-        self.strings
+        self.as_ref().strings
             .get(key).map(|s| s.to_string())
-            .or_else(|| self.lists.get(key).map(string_prefix))
+            .or_else(|| self.as_ref().lists.get(key).map(string_prefix))
             .ok_or(io::Error::new(io::ErrorKind::NotFound, key))
     }
 
@@ -36,7 +38,7 @@ impl KeyValue for core::PersistentState {
 }
 
 pub fn apply(
-    state: &core::State,
+    state: &core::ServerState,
     command: commands::StringsApi,
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -65,15 +67,15 @@ mod tests {
 
     #[test]
     fn set() {
-        let mut st = core::PersistentState::make();
+        let mut st = core::DomainState::new(core::PersistentState::empty());
         st.set("apan:1", "value");
-        assert_eq!(st.strings.get("apan:1"), Some(&"value".to_string()));
-        assert_eq!(st.strings.len(), 1);
+        assert_eq!(st.as_ref().strings.get("apan:1"), Some(&"value".to_string()));
+        assert_eq!(st.as_ref().strings.len(), 1);
     }
 
     #[test]
     fn get() {
-        let mut st = core::PersistentState::make();
+        let mut st = core::DomainState::new(core::PersistentState::empty());
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         assert_eq!(st.get("apan:1").map_err(|e| e.to_string()), Ok("value".to_string()));
@@ -82,15 +84,15 @@ mod tests {
 
     #[test]
     fn mget() {
-        let mut st = core::PersistentState::make();
+        let mut st = core::DomainState::new(core::PersistentState::empty());
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         st.set("apan:4", "something else");
-        st.lists.insert("apan:5".to_string(), vec![
+        st.as_mut().lists.insert("apan:5".to_string(), vec![
             "a value".to_string(),
             "two value".to_string(),
         ]);
-        assert_eq!(st.strings.len(), 3);
+        assert_eq!(st.as_ref().strings.len(), 3);
         assert_eq!(
             st.mget(vec!["apan:1", "apan:2", "apan:3", "apan:5"]),
             vec![
