@@ -28,7 +28,9 @@ pub enum Generic {
     Scan { cursor:  usize,
            pattern: Option<String>,
            count:   Option<usize>,
-           tpe:     Option<String>, }
+           tpe:     Option<String>, },
+    Exists(String),
+    Type(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -39,8 +41,8 @@ pub enum CommandOption {
 #[derive(Debug, PartialEq)]
 pub enum ListApi {
     Length(String),
-    Append(String, Vec<String>),
-    Prepend(String, Vec<String>),
+    Append(String, Vec<String>, bool),
+    Prepend(String, Vec<String>, bool),
     Range(String, i32, i32),
 }
 
@@ -134,6 +136,7 @@ impl TryFrom<Message> for ServerManagement {
     }
 }
 
+/* In generic.rs too? */
 impl TryFrom<Message> for Generic {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
@@ -151,10 +154,21 @@ impl TryFrom<Message> for Generic {
                     count: Some(Command::decode(count)?),
                     tpe: None,
                 }),
+            Some(["SCAN" | "scan", cursor, "MATCH" | "match", pattern, "COUNT" | "count", count]) =>
+                Ok(Generic::Scan {
+                    cursor: Command::decode(cursor)?,
+                    pattern: Some(pattern.to_string()),
+                    count: Some(Command::decode(count)?),
+                    tpe: None,
+                }),
             Some(["TTL" | "ttl", key]) =>
                 Ok(Generic::Ttl(key.to_string())),
             Some(["EXPIRE" | "expire", key, ttl]) =>
                 Ok(Generic::Expire(key.to_string(), Command::decode(ttl)?)),
+            Some(["EXISTS" | "exists", key]) =>
+                Ok(Generic::Exists(key.to_string())),
+            Some(["TYPE" | "type", key]) =>
+                Ok(Generic::Type(key.to_string())),
             _otherwise =>
                 Command::wrong_category(),
         }
@@ -172,14 +186,26 @@ impl TryFrom<Message> for ListApi {
             Some(["RPUSH" | "rpush", key, elements @ ..]) =>
                 Ok(ListApi::Append(
                     key.to_string(),
-                    /* Is this really the correct way? */
-                    elements.to_vec().iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|s| s.to_string()).collect(),
+                    false,
+                )),
+            Some(["RPUSHX" | "rpushx", key, elements @ ..]) =>
+                Ok(ListApi::Append(
+                    key.to_string(),
+                    elements.iter().map(|s| s.to_string()).collect(),
+                    true,
                 )),
             Some(["LPUSH" | "lpush", key, elements @ ..]) =>
                 Ok(ListApi::Prepend(
                     key.to_string(),
-                    /* Is this really the correct way? */
-                    elements.to_vec().iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|s| s.to_string()).collect(),
+                    false,
+                )),
+            Some(["LPUSHX" | "lpushx", key, elements @ ..]) =>
+                Ok(ListApi::Prepend(
+                    key.to_string(),
+                    elements.iter().map(|s| s.to_string()).collect(),
+                    true,
                 )),
             Some(["LLEN" | "llen", key]) =>
                 Ok(ListApi::Length(key.to_string())),
@@ -220,7 +246,19 @@ mod tests {
     fn lists() {
         assert_eq!(
             Command::try_from(make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()])),
+            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], false)),
+        );
+        assert_eq!(
+            Command::try_from(make_command(vec!["LPUSHX", "mylist", "Kalle"])).unwrap(),
+            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], true)),
+        );
+        assert_eq!(
+            Command::try_from(make_command(vec!["RPUSH", "mylist", "Kalle"])).unwrap(),
+            Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], false)),
+        );
+        assert_eq!(
+            Command::try_from(make_command(vec!["RPUSHX", "mylist", "Kalle"])).unwrap(),
+            Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], true)),
         );
         assert_eq!(
             Command::try_from(make_command(vec!["LLEN", "mylist"])).unwrap(),

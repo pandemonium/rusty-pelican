@@ -11,7 +11,7 @@ pub fn apply(
     match command {
         commands::ServerManagement::DbSize =>
             Ok(resp::Message::Integer(
-                state.for_reading()?.keys("*").len() as i64
+                state.for_reading()?.filter_keys("*").len() as i64
             )),
         commands::ServerManagement::Command(_options) =>
             Ok(resp::Message::Error {
@@ -19,7 +19,7 @@ pub fn apply(
                 message: "Unsupported command".to_string(),
             }),
         commands::ServerManagement::Info(commands::Topic::Keyspace) => {
-            let keys = state.for_reading()?.keys("*");
+            let keys = state.for_reading()?.filter_keys("*");
             let keyspace = format!("# Keyspace\r\ndb0:keys={},expires=0,avg_ttl=0\r\n", keys.len());
             Ok(resp::Message::BulkString(keyspace.to_string()))
         },

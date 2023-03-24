@@ -9,8 +9,8 @@ use crate::resp;
 
 pub trait List {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
-    fn append(&mut self, key: &str, element: &str) -> usize;
-    fn prepend(&mut self, key: &str, element: &str) -> usize;
+    fn append(&mut self, key: &str, element: &str, to_existing: bool) -> usize;
+    fn prepend(&mut self, key: &str, element: &str, to_existing: bool) -> usize;
     fn length(&self, key: &str) -> usize;
 }
 
@@ -40,28 +40,36 @@ impl List for core::Domain {
         }
     }
 
-    fn append(&mut self, key: &str, element: &str) -> usize {
-        self.lists
-            .entry(key.to_string())
-            .and_modify(|xs| xs.push_back(element.to_string()))
-            .or_insert_with(|| {
+    fn append(&mut self, key: &str, element: &str, to_existing: bool) -> usize {
+        let xs =
+            self.lists
+                .entry(key.to_string())
+                .and_modify(|xs| xs.push_back(element.to_string()));
+
+        if !to_existing {
+            xs.or_insert_with(|| {
                 let mut xs = collections::VecDeque::new();
                 xs.push_back(element.to_string());
                 xs
              });
+        }
         self.expunge_expired(&time::Instant::now());
         self.length(key)
     }
 
-    fn prepend(&mut self, key: &str, element: &str) -> usize {
-        self.lists
-            .entry(key.to_string())
-            .and_modify(|xs| xs.push_front(element.to_string()))
-            .or_insert_with(|| {
+    fn prepend(&mut self, key: &str, element: &str, to_existing: bool) -> usize {
+        let xs =
+            self.lists
+                .entry(key.to_string())
+                .and_modify(|xs| xs.push_front(element.to_string()));
+
+        if !to_existing {
+            xs.or_insert_with(|| {
                 let mut xs = collections::VecDeque::new();
                 xs.push_back(element.to_string());
                 xs
              });
+        }    
         self.length(key)
     }
 
@@ -80,19 +88,19 @@ pub fn apply(
             Ok(resp::Message::Integer(
                 state.for_writing()?.length(&key) as i64
             )),
-        commands::ListApi::Append(key, elements) => {
+        commands::ListApi::Append(key, elements, to_existing) => {
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
-                return_value = st.append(&key, &element)
+                return_value = st.append(&key, &element, to_existing)
             }
             Ok(resp::Message::Integer(return_value as i64))
         },
-        commands::ListApi::Prepend(key, elements) => {
+        commands::ListApi::Prepend(key, elements, to_existing) => {
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
-                return_value = st.prepend(&key, &element)
+                return_value = st.prepend(&key, &element, to_existing)
             }
             Ok(resp::Message::Integer(return_value as i64))
         },
@@ -114,13 +122,13 @@ mod tests {
     fn adding() {
         let mut st = core::Domain::new(core::Data::empty());
         assert_eq!(st.length("key"), 0);
-        st.append("key", "1");
-        st.append("key", "2");
-        st.prepend("key", "3");
+        st.append("key", "1", false);
+        st.append("key", "2", false);
+        st.prepend("key", "3", false);
         assert_eq!(st.length("key"), 3);
         assert_eq!(st.lists.len(), 1);
-        st.prepend("key2", "1");
-        st.append("key2", "2");
+        st.prepend("key2", "1", false);
+        st.append("key2", "2", false);
         assert_eq!(st.length("key"), 3);
         assert_eq!(st.length("key2"), 2);
         assert_eq!(st.lists.len(), 2);
@@ -133,11 +141,22 @@ mod tests {
     }
 
     #[test]
+    fn add_to_existing() {
+        let mut st = core::Domain::new(core::Data::empty());
+        assert_eq!(st.append("key", "element", true), 0);
+        assert_eq!(st.append("key", "element", false), 1);
+        assert_eq!(st.append("key", "element", true), 2);
+        assert_eq!(st.prepend("key2", "element", true), 0);
+        assert_eq!(st.prepend("key2", "element", false), 1);
+        assert_eq!(st.prepend("key2", "element", true), 2);
+    }
+
+    #[test]
     fn range() {
         let mut st = core::Domain::new(core::Data::empty());
         
         for i in 1..10 {
-            st.append("key", &i.to_string());
+            st.append("key", &i.to_string(), false);
         }
         assert_eq!(
             st.range("key", 0, 100),
