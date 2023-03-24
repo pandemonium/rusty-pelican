@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::collections;
 use std::path::Path;
 use std::thread;
 use std::sync;
 use std::io;
+use std::io::prelude::*;
+use std::net;
 
 use crate::commands::*;
 use crate::resp::*;
@@ -12,32 +14,28 @@ use crate::connections;
 use crate::server;
 use crate::ttl;
 
-use std::{
-    io::{prelude::*, BufReader, BufWriter},
-    net::{TcpListener, TcpStream},
-};
 use parser::*;
 
-pub type DomainState = ttl::TtlWrapper<PersistentState>;
+pub type Domain = ttl::Lifetimes<Data>;
 
 #[derive(Clone)]
-pub struct ServerState(sync::Arc<sync::RwLock<DomainState>>);
+pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 
-impl ServerState {
-    pub fn new(state: PersistentState) -> Self {
-        Self(sync::Arc::new(sync::RwLock::new(ttl::TtlWrapper::new(state))))
+impl DomainContext {
+    pub fn new(data: Data) -> Self {
+        Self(sync::Arc::new(sync::RwLock::new(ttl::Lifetimes::new(data))))
     }
 
-    pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<DomainState>, io::Error> {
+    pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<Domain>, io::Error> {
         self.0.read().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
-    pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<DomainState>, io::Error> {
+    pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<Domain>, io::Error> {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 }
 
-impl ttl::Expungeable for PersistentState {
+impl ttl::Expungeable for Data {
     type Key = String;
     fn expunge(&mut self, id: &Self::Key) {
         self.lists.remove(id);
@@ -45,16 +43,16 @@ impl ttl::Expungeable for PersistentState {
     }
 }
 
-pub struct PersistentState {
-    pub lists:   HashMap<String, Vec<String>>,  /* Use a VecDeque instead of Vec. */
-    pub strings: HashMap<String, String>,
+pub struct Data {
+    pub lists:   collections::HashMap<String, collections::VecDeque<String>>,
+    pub strings: collections::HashMap<String, String>,
 }
 
-impl PersistentState {
+impl Data {
     pub fn empty() -> Self {
         Self { 
-            lists:   HashMap::new(),
-            strings: HashMap::new(), 
+            lists:   collections::HashMap::new(),
+            strings: collections::HashMap::new(), 
         }
     }
 
@@ -68,7 +66,7 @@ trait Executive {
     fn apply(&self, command: Command) -> Result<Message, io::Error>;
 }
 
-impl Executive for ServerState {
+impl Executive for DomainContext {
     fn apply(&self, command: Command) -> Result<Message, io::Error> {
         match command {
             Command::Lists(command)                => lists::apply(self, command),
@@ -86,15 +84,15 @@ impl Executive for ServerState {
 }
 
 pub struct RunLoop {
-    state:         ServerState,
-    socket_server: TcpListener,
+    state:         DomainContext,
+    socket_server: net::TcpListener,
 }
 
 impl RunLoop {
-    pub fn make(persistent: PersistentState, iface:  &str) -> Result<Self, io::Error> {
-        let listener = TcpListener::bind(iface)?;
+    pub fn make(data: Data, interface: &str) -> Result<Self, io::Error> {
+        let listener = net::TcpListener::bind(interface)?;
         Ok(Self {
-            state: ServerState::new(persistent),
+            state: DomainContext::new(data),
             socket_server: listener,
         })
     }
@@ -106,7 +104,6 @@ impl RunLoop {
             match connection {
                 Ok(socket) => {
                     thread::spawn(move || Self::handle_connection(&state, &socket));
-                    ()
                 },
                 Err(e) => println!("execute: Error `{}`.", e),
             }
@@ -114,25 +111,23 @@ impl RunLoop {
         Ok(())
     }
 
-    fn handle_connection(state: &ServerState, connection: &TcpStream) -> Result<(), io::Error> {
-        let mut reader = BufReader::new(connection);
-        let mut writer = BufWriter::new(connection);
+    fn handle_connection(state: &DomainContext, connection: &net::TcpStream) -> Result<(), io::Error> {
+        let mut reader = io::BufReader::new(connection);
+        let mut writer = io::BufWriter::new(connection);
         loop {
-            let response = Self::handle_request(state, &mut reader)?;
+            let response = Self::handle_command(state, &mut reader)?;
 
             println!("handle_request: responding with `{}`.", response);
             writer.write_all(String::from(response).as_bytes())?;
-            writer.flush()?  
+            writer.flush()?
         }
     }
 
-    fn handle_request(state: &ServerState, reader: &mut BufReader<&TcpStream>) -> Result<Message, io::Error> {
-        let mut request = RequestState::make();
-        request.read(reader).and_then(|message|
+    fn handle_command(state: &DomainContext, reader: &mut io::BufReader<&net::TcpStream>) -> Result<Message, io::Error> {
+        let mut request = RequestState::empty();
+        request.parse_message(reader).and_then(|message|
             Command::try_from(message).and_then(|command| state.apply(command))
-        ).or_else(|_error| {
-            Ok::<Message, io::Error>(request.as_unknown_command_error_message())
-        })
+        )
     }
 }
 

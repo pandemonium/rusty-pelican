@@ -1,6 +1,7 @@
 use std::io;
 use std::cmp;
 use std::time;
+use std::collections;
 
 use crate::commands;
 use crate::core;
@@ -13,7 +14,7 @@ pub trait List {
     fn length(&self, key: &str) -> usize;
 }
 
-impl List for core::DomainState {
+impl List for core::Domain {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String> {
         let length = self.length(key) as i32;
         if start >= length {
@@ -28,7 +29,11 @@ impl List for core::DomainState {
             };
 
             if effective_start <= effective_stop {
-                self.lists[key][effective_start..effective_stop].to_vec()
+                self.lists.get(&key.to_string())
+                    .unwrap_or(&collections::VecDeque::from(vec![]))
+                    .range(effective_start..effective_stop)
+                    .map(|s| s.to_string())
+                    .collect()
             } else {
                 vec![]
             }
@@ -38,8 +43,12 @@ impl List for core::DomainState {
     fn append(&mut self, key: &str, element: &str) -> usize {
         self.lists
             .entry(key.to_string())
-            .and_modify(|xs| xs.push(element.to_string()))
-            .or_insert(vec![element.to_string()]);
+            .and_modify(|xs| xs.push_back(element.to_string()))
+            .or_insert_with(|| {
+                let mut xs = collections::VecDeque::new();
+                xs.push_back(element.to_string());
+                xs
+             });
         self.expunge_expired(&time::Instant::now());
         self.length(key)
     }
@@ -47,8 +56,12 @@ impl List for core::DomainState {
     fn prepend(&mut self, key: &str, element: &str) -> usize {
         self.lists
             .entry(key.to_string())
-            .and_modify(|xs| xs.insert(0, element.to_string()))
-            .or_insert(vec![element.to_string()]);
+            .and_modify(|xs| xs.push_front(element.to_string()))
+            .or_insert_with(|| {
+                let mut xs = collections::VecDeque::new();
+                xs.push_back(element.to_string());
+                xs
+             });
         self.length(key)
     }
 
@@ -59,7 +72,7 @@ impl List for core::DomainState {
 }
 
 pub fn apply(
-    state:   &core::ServerState, 
+    state:   &core::DomainContext, 
     command: commands::ListApi
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -71,7 +84,6 @@ pub fn apply(
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
-                /* Remove deref_mut by AsMut:ing this shit. */
                 return_value = st.append(&key, &element)
             }
             Ok(resp::Message::Integer(return_value as i64))
@@ -93,12 +105,14 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use crate::core;
     use super::List;
 
     #[test]
     fn adding() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         assert_eq!(st.length("key"), 0);
         st.append("key", "1");
         st.append("key", "2");
@@ -110,17 +124,17 @@ mod tests {
         assert_eq!(st.length("key"), 3);
         assert_eq!(st.length("key2"), 2);
         assert_eq!(st.lists.len(), 2);
-        assert_eq!(st.lists.get("key"), Some(&vec![
+        assert_eq!(st.lists.get("key"), Some(&VecDeque::from([
             "3".to_string(), "1".to_string(), "2".to_string()
-        ]));
-        assert_eq!(st.lists.get("key2"), Some(&vec![
+        ])));
+        assert_eq!(st.lists.get("key2"), Some(&VecDeque::from([
             "1".to_string(), "2".to_string()
-        ]));
+        ])));
     }
 
     #[test]
     fn range() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         
         for i in 1..10 {
             st.append("key", &i.to_string());

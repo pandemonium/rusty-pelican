@@ -5,7 +5,7 @@ use crate::resp;
 use crate::generic::*;
 
 pub fn apply(
-    state:   &core::ServerState, 
+    state:   &core::DomainContext, 
     command: commands::ServerManagement
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -27,10 +27,11 @@ pub fn apply(
             Ok(resp::Message::BulkString(
                 "# Server\r\nredis_version:7.0.9\r\n".to_string()
             )),
-        commands::ServerManagement::Info(commands::Topic::Named(_)) =>
-            Ok(resp::Message::Error {
-                prefix: resp::ErrorPrefix::Err,
-                message: "Unsupported command".to_string(),
-            }),
+        commands::ServerManagement::Info(commands::Topic::Named(topic)) =>
+            Ok(resp::Message::BulkString(format!("Info about {topic}")))
+//            Ok(resp::Message::Error {
+//                prefix: resp::ErrorPrefix::Err,
+//                message: "Unsupported command".to_string(),
+//            }),
 }
 }

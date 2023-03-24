@@ -163,27 +163,23 @@ pub mod parser {
     }
 
     impl RequestState {
-        pub fn make() -> Self {
+        pub fn empty() -> Self {
             Self {
                 tokens: vec![],
             }
-        }
-
-        fn add_token(&mut self, token: Token) {
-            self.tokens.push(token)
         }
 
         fn connection_was_reset<A>() -> Result<A, Error> {
             Err(Error::new(ErrorKind::ConnectionReset, "Connection closed."))
         }
 
-        pub fn read(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
+        pub fn parse_message(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
             let mut lines = reader.lines();
             loop {
                 match lines.next() {
                     Some(Ok(token_image)) => {
                         let token = Token::parse(&token_image);
-                        self.add_token(token);
+                        self.tokens.push(token);
                         match self.try_parse_message() {
                             Some(message) => break Ok(message),
                             None          => continue,
@@ -195,12 +191,7 @@ pub mod parser {
             }
         }
 
-        pub fn as_unknown_command_error_message(&self) -> Message {
-            let text = format!("unknown command '{:?}'", self.tokens);
-            Message::Error { prefix: ErrorPrefix::Err, message: text, }
-        }
-
-        pub fn try_parse_message(&mut self) -> Option<Message> {
+        fn try_parse_message(&mut self) -> Option<Message> {
             match parser::parse_message(&self.tokens) {
                 (Ok(it), remaining) => {
                     self.tokens = remaining.to_vec();
@@ -276,7 +267,6 @@ pub mod parser {
         }
     }
 
-    /* Should these functions be in impl Value? */
     /* What about this lifetime thing? */
     fn parse_array<'a>(
         count:  i32, 

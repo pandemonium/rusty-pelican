@@ -1,3 +1,4 @@
+use std::collections;
 use std::io;
 
 use crate::commands;
@@ -11,13 +12,13 @@ pub trait KeyValue {
     fn mget(&self, keys: Vec<&str>) -> Vec<Option<String>>;
 }
 
-fn string_prefix(xs: &Vec<String>) -> String {
+fn string_prefix(xs: &collections::VecDeque<String>) -> String {
     xs.into_iter().take(5)
       .map(|s| s.to_string()).collect::<Vec<_>>()
       .join(",")
 }
 
-impl KeyValue for core::DomainState {
+impl KeyValue for core::Domain {
     fn set(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_string(), value.to_string());
         self.expunge_expired(&time::Instant::now())
@@ -38,7 +39,7 @@ impl KeyValue for core::DomainState {
 }
 
 pub fn apply(
-    state: &core::ServerState,
+    state: &core::DomainContext,
     command: commands::StringsApi,
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -62,20 +63,27 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+    use super::collections::VecDeque;
     use crate::core;
     use super::KeyValue;
 
     #[test]
     fn set() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         st.set("apan:1", "value");
         assert_eq!(st.strings.get("apan:1"), Some(&"value".to_string()));
         assert_eq!(st.strings.len(), 1);
     }
 
     #[test]
+    fn set_wrong_type() {
+//        let mut st = core::DomainState::new(core::PersistentState::empty());
+//        assert_eq!(st.append("key", "element").err(), "WRONGTYPE");
+    }
+
+    #[test]
     fn get() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         assert_eq!(st.get("apan:1").map_err(|e| e.to_string()), Ok("value".to_string()));
@@ -84,14 +92,14 @@ mod tests {
 
     #[test]
     fn mget() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         st.set("apan:4", "something else");
-        st.lists.insert("apan:5".to_string(), vec![
+        st.lists.insert("apan:5".to_string(), VecDeque::from([
             "a value".to_string(),
             "two value".to_string(),
-        ]);
+        ]));
         assert_eq!(st.strings.len(), 3);
         assert_eq!(
             st.mget(vec!["apan:1", "apan:2", "apan:3", "apan:5"]),

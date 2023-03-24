@@ -10,26 +10,26 @@ pub trait Expungeable {
     fn expunge(&mut self, id: &Self::Key);
 }
 
-pub struct TtlWrapper<Underlying: Expungeable> {
+pub struct Lifetimes<Underlying: Expungeable> {
     expires:    collections::BTreeMap<time::Instant, Underlying::Key>,
     ttls:       collections::HashMap<Underlying::Key, time::Instant>,
     underlying: Underlying,
 }
 
-impl <A: Expungeable> Deref for TtlWrapper<A> {
+impl <A: Expungeable> Deref for Lifetimes<A> {
     type Target = A;
     fn deref(&self) -> &Self::Target {
         &self.underlying
     }
 }
 
-impl <A: Expungeable> DerefMut for TtlWrapper<A> {
+impl <A: Expungeable> DerefMut for Lifetimes<A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.underlying
     }
 }
 
-impl <Underlying: Expungeable> TtlWrapper<Underlying> {
+impl <Underlying: Expungeable> Lifetimes<Underlying> {
     pub fn new(underlying: Underlying) -> Self {
         Self {
             expires:    collections::BTreeMap::new(),
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn register_ttl() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         let now = time::Instant::now();
         assert_eq!(st.ttl_remaining(&"key".to_string(), &now), None);
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(1));
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn expires_the_right_one() {
-        let mut st = core::DomainState::new(core::PersistentState::empty());
+        let mut st = core::Domain::new(core::Data::empty());
         let now = time::Instant::now();
         st.set("key", "value");
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(0));

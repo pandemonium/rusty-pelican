@@ -88,11 +88,11 @@ impl TryFrom<Message> for Command {
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         println!("Command: {command}");
         ListApi::try_from(command.clone()).map(Command::Lists)
-            .or(StringsApi::try_from(command.clone()).map(Command::Strings))
-            .or(ConnectionManagement::try_from(command.clone()).map(Command::ConnectionManagement))
-            .or(ServerManagement::try_from(command.clone()).map(Command::ServerManagement))
-            .or(Generic::try_from(command.clone()).map(Command::Generic))
-            .or(Command::unknown(command))
+            .or_else(|_| StringsApi::try_from(command.clone()).map(Command::Strings))
+            .or_else(|_| ConnectionManagement::try_from(command.clone()).map(Command::ConnectionManagement))
+            .or_else(|_| ServerManagement::try_from(command.clone()).map(Command::ServerManagement))
+            .or_else(|_| Generic::try_from(command.clone()).map(Command::Generic))
+            .or_else(|_| Command::unknown(command))
     }
 }
 
@@ -100,7 +100,7 @@ impl TryFrom<Message> for ConnectionManagement {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
-            Some(["CLIENT", "SETNAME", name]) => 
+            Some(["CLIENT" | "client", "SETNAME" | "setname", name]) => 
                 Ok(ConnectionManagement::SetClientName(name.to_string())),
             Some(["PING", msg @ .. ]) => {
                 let message = if msg.is_empty() {
@@ -122,13 +122,14 @@ impl TryFrom<Message> for ServerManagement {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
-            Some(["COMMAND", "DOCS"])  => Ok(ServerManagement::Command(CommandOption::Docs)),
-            Some(["COMMAND"])          => Ok(ServerManagement::Command(CommandOption::Empty)),
-            Some(["DBSIZE"])           => Ok(ServerManagement::DbSize),
-            Some(["INFO", "keyspace"]) => Ok(ServerManagement::Info(Topic::Keyspace)),
-            Some(["INFO", "server"])   => Ok(ServerManagement::Info(Topic::Server)),
-            Some(["INFO", topic])      => Ok(ServerManagement::Info(Topic::Named(topic.to_string()))),
-            _otherwise                 => Command::wrong_category(),
+            Some(["COMMAND" | "commands", "DOCS" | "docs"]) => Ok(ServerManagement::Command(CommandOption::Docs)),
+            Some(["COMMAND" | "commands"])                  => Ok(ServerManagement::Command(CommandOption::Empty)),
+            Some(["DBSIZE" | "dbsize"])                     => Ok(ServerManagement::DbSize),
+            Some(["INFO" | "info", "keyspace"])             => Ok(ServerManagement::Info(Topic::Keyspace)),
+            Some(["INFO" | "info", "server"])               => Ok(ServerManagement::Info(Topic::Server)),
+            Some(["INFO" | "info", topic])                  => Ok(ServerManagement::Info(Topic::Named(topic.to_string()))),
+            Some(["INFO" | "info"])                         => Ok(ServerManagement::Info(Topic::Named("topic.to_string()".to_string()))),
+            _otherwise                                      => Command::wrong_category(),
         }
     }
 }
@@ -137,22 +138,22 @@ impl TryFrom<Message> for Generic {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
-            Some(["KEYS", pattern]) =>
+            Some(["KEYS" | "keys", pattern]) =>
                 Ok(Generic::Keys(pattern.to_string())),
-            Some(["SCAN", cursor]) =>
+            Some(["SCAN" | "scan", cursor]) =>
                 Ok(Generic::Scan {
                     cursor: Command::decode(cursor)?, pattern: None, count: None, tpe: None
                 }),
-            Some(["SCAN", cursor, "COUNT", count]) =>
+            Some(["SCAN" | "scan", cursor, "COUNT" | "count", count]) =>
                 Ok(Generic::Scan {
                     cursor: Command::decode(cursor)?, 
                     pattern: None, 
                     count: Some(Command::decode(count)?),
                     tpe: None,
                 }),
-            Some(["TTL", key]) =>
+            Some(["TTL" | "ttl", key]) =>
                 Ok(Generic::Ttl(key.to_string())),
-            Some(["EXPIRE", key, ttl]) =>
+            Some(["EXPIRE" | "expire", key, ttl]) =>
                 Ok(Generic::Expire(key.to_string(), Command::decode(ttl)?)),
             _otherwise =>
                 Command::wrong_category(),
@@ -164,23 +165,23 @@ impl TryFrom<Message> for ListApi {
     type Error = io::Error;
     fn try_from(value: Message) -> Result<Self, Self::Error> {
         match value.try_as_bulk_array().as_deref() {
-            Some(["LRANGE", key, start, stop]) =>
+            Some(["LRANGE" | "lrange", key, start, stop]) =>
                 Ok(ListApi::Range(
                     key.to_string(), Command::decode(start)?, Command::decode(stop)?
                 )),
-            Some(["RPUSH", key, elements @ ..]) =>
+            Some(["RPUSH" | "rpush", key, elements @ ..]) =>
                 Ok(ListApi::Append(
                     key.to_string(),
                     /* Is this really the correct way? */
                     elements.to_vec().iter().map(|s| s.to_string()).collect(),
                 )),
-            Some(["LPUSH", key, elements @ ..]) =>
+            Some(["LPUSH" | "lpush", key, elements @ ..]) =>
                 Ok(ListApi::Prepend(
                     key.to_string(),
                     /* Is this really the correct way? */
                     elements.to_vec().iter().map(|s| s.to_string()).collect(),
                 )),
-            Some(["LLEN", key]) =>
+            Some(["LLEN" | "llen", key]) =>
                 Ok(ListApi::Length(key.to_string())),
             _otherwise =>
                 Command::wrong_category(),
@@ -192,11 +193,11 @@ impl TryFrom<Message> for StringsApi {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
-            Some(["SET", key, value]) =>
+            Some(["SET" | "set", key, value]) =>
                 Ok(StringsApi::Set(key.to_string(), value.to_string())),
-            Some(["GET", key]) =>
+            Some(["GET" | "get", key]) =>
                 Ok(StringsApi::Get(key.to_string())),
-            Some(["MGET", keys @ ..]) =>
+            Some(["MGET" | "mget", keys @ ..]) =>
                 Ok(StringsApi::Mget(keys.to_vec().iter().map(|s| s.to_string()).collect())),
             _otherwise =>
                 Command::wrong_category(),

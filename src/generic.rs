@@ -57,7 +57,7 @@ pub trait Generic {
     ) -> Scan;
 }
 
-impl Generic for core::DomainState {
+impl Generic for core::Domain {
     fn ttl(&self, key: &str) -> Ttl {
         let now = time::Instant::now();
         match self.ttl_remaining(&key.to_string(), &now) {
@@ -106,7 +106,7 @@ impl From<Ttl> for Message {
 }
 
 pub fn apply(
-    state: &core::ServerState,
+    state: &core::DomainContext,
     command: commands::Generic,
 )  -> Result<resp::Message, io::Error> {
     match command {
