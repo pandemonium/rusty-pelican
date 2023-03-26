@@ -1,9 +1,9 @@
+use std::ops::{Deref, DerefMut};
 use std::hash;
 use std::collections;
-use std::ops::Deref;
-use std::ops::DerefMut;
 use std::time;
 use std::fmt;
+use std::io;
 
 pub trait Expungeable {
     type Key: PartialEq + Eq + hash::Hash + Clone + fmt::Debug;
@@ -80,10 +80,18 @@ mod tests {
     use super::*;
     use crate::core;
     use crate::datatype::keyvalue::*;
+    use crate::persistence;
+    use crate::ttl;
+
+    fn make_domain() -> Result<core::Domain, io::Error> {
+        Ok(persistence::WithTransactionLog::new(
+            ttl::Lifetimes::new(core::Data::empty())
+        )?)
+    }
 
     #[test]
     fn register_ttl() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         let now = time::Instant::now();
         assert_eq!(st.ttl_remaining(&"key".to_string(), &now), None);
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(1));
@@ -95,7 +103,7 @@ mod tests {
 
     #[test]
     fn expires_the_right_one() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         let now = time::Instant::now();
         st.set("key", "value");
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(0));

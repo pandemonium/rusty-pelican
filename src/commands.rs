@@ -43,6 +43,7 @@ pub enum ListApi {
     Length(String),
     Append(String, Vec<String>, bool),
     Prepend(String, Vec<String>, bool),
+    Set(String, usize, String),
     Range(String, i32, i32),
 }
 
@@ -209,6 +210,12 @@ impl TryFrom<Message> for ListApi {
                 )),
             Some(["LLEN" | "llen", key]) =>
                 Ok(ListApi::Length(key.to_string())),
+            Some(["LSET" | "lset", key, index, element]) =>
+                Ok(ListApi::Set(
+                    key.to_string(), 
+                    Command::decode(index)?,
+                    element.to_string(),
+                )),
             _otherwise =>
                 Command::wrong_category(),
         }

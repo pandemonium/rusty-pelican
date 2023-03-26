@@ -2,8 +2,9 @@ use std::fmt::Display;
 use std::str::FromStr;
 use std::io::Error;
 use std::fmt;
+use arbitrary::Arbitrary;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Arbitrary, Clone, Debug, PartialEq)]
 pub enum ErrorPrefix {
     Empty, Err,
     Named(String),
@@ -38,7 +39,7 @@ impl From<ErrorPrefix> for String {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Arbitrary, Clone, Debug, PartialEq)]
 pub enum Message {
     SimpleString(String),
     Error { prefix: ErrorPrefix, message: String },
@@ -155,43 +156,46 @@ impl Message {
 
 pub mod parser {
     use super::*;
-    use std::io::{Error, ErrorKind, BufReader, BufRead};
-    use std::net::TcpStream;
+    use std::io::{Error, ErrorKind, BufRead};
 
-    pub struct RequestState {
+    pub struct ParseState {
         tokens: Vec<Token>,
     }
 
-    impl RequestState {
+    impl ParseState {
         pub fn empty() -> Self {
             Self {
                 tokens: vec![],
             }
         }
 
-        fn connection_was_reset<A>() -> Result<A, Error> {
-            Err(Error::new(ErrorKind::ConnectionReset, "Connection closed."))
+        pub fn add_token(&mut self, token: Token) {
+            self.tokens.push(token)
         }
 
-        pub fn parse_message(&mut self, reader: &mut BufReader<&TcpStream>) -> Result<Message, Error> {
+        fn end_of_file<A>() -> Result<A, Error> {
+            Err(Error::new(ErrorKind::UnexpectedEof, "end of file"))
+        }
+
+        pub fn parse_message<S: BufRead>(&mut self, reader: &mut S) -> Result<Message, Error> {
             let mut lines = reader.lines();
             loop {
                 match lines.next() {
                     Some(Ok(token_image)) => {
                         let token = Token::parse(&token_image);
-                        self.tokens.push(token);
+                        self.add_token(token);
                         match self.try_parse_message() {
                             Some(message) => break Ok(message),
                             None          => continue,
                         }
                     },
                     Some(Err(e)) => break Err(e),
-                    None         => break Self::connection_was_reset(),
+                    None         => break Self::end_of_file(),
                 }
             }
         }
 
-        fn try_parse_message(&mut self) -> Option<Message> {
+        pub fn try_parse_message(&mut self) -> Option<Message> {
             match parser::parse_message(&self.tokens) {
                 (Ok(it), remaining) => {
                     self.tokens = remaining.to_vec();
@@ -256,7 +260,7 @@ pub mod parser {
             }            
         }
 
-        fn parse(line: &str) -> Token {
+        pub fn parse(line: &str) -> Token {
             if line.len() > 0 {
                 let prefix = &line[0..1];
                 let suffix = &line[1..];
