@@ -9,8 +9,14 @@ use crate::resp;
 
 pub trait List {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
+
+    /* Replace `to_exixting` with a two-variant. */
     fn append(&mut self, key: &str, element: &str, to_existing: bool) -> usize;
     fn prepend(&mut self, key: &str, element: &str, to_existing: bool) -> usize;
+
+    /* This has a tri-state error condition. More datatypes probably do - solve 
+       this with a domain level-error type. */
+    fn set(&mut self, key: &str, index: usize, element: &str) -> bool;
     fn length(&self, key: &str) -> usize;
 }
 
@@ -47,11 +53,7 @@ impl List for core::Domain {
                 .and_modify(|xs| xs.push_back(element.to_string()));
 
         if !to_existing {
-            xs.or_insert_with(|| {
-                let mut xs = collections::VecDeque::new();
-                xs.push_back(element.to_string());
-                xs
-             });
+            xs.or_insert_with(|| collections::VecDeque::from(vec![element.to_string()]));
         }
         self.expunge_expired(&time::Instant::now());
         self.length(key)
@@ -64,13 +66,27 @@ impl List for core::Domain {
                 .and_modify(|xs| xs.push_front(element.to_string()));
 
         if !to_existing {
-            xs.or_insert_with(|| {
-                let mut xs = collections::VecDeque::new();
-                xs.push_back(element.to_string());
-                xs
-             });
+            xs.or_insert_with(|| collections::VecDeque::from(vec![element.to_string()]));
         }    
         self.length(key)
+    }
+
+    fn set(&mut self, key: &str, index: usize, element: &str) -> bool {
+        let insertion =
+            self.lists
+                .entry(key.to_string())
+                .and_modify(|list|
+                    if let Some(existing) = list.get_mut(index) {
+                        *existing = element.to_string()
+                    }
+                 );
+
+        /* Is this the way? */
+        if let collections::hash_map::Entry::Occupied(_) = insertion {
+            true
+        } else {
+            false
+        }
     }
 
     fn length(&self, key: &str) -> usize {
@@ -79,8 +95,12 @@ impl List for core::Domain {
     }
 }
 
+pub fn is_write(command: &commands::ListApi) -> bool {
+    todo!()
+}
+
 pub fn apply(
-    state:   &core::DomainContext, 
+    state:   &core::DomainContext,
     command: commands::ListApi
 ) -> Result<resp::Message, io::Error> {
     match command {
@@ -104,6 +124,15 @@ pub fn apply(
             }
             Ok(resp::Message::Integer(return_value as i64))
         },
+        commands::ListApi::Set(key, index, element) =>
+            if state.for_writing()?.set(&key, index, &element) {
+                Ok(resp::Message::SimpleString("OK".to_string()))
+            } else {
+                Ok(resp::Message::Error { 
+                    prefix: resp::ErrorPrefix::Err,
+                    message: "Index out of range".to_string()
+                })
+            },
         commands::ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
                 state.for_reading()?.range(&key, start, stop).as_slice()
@@ -113,14 +142,22 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::collections::VecDeque;
-
     use crate::core;
+    use crate::ttl;
+    use crate::persistence;
     use super::List;
+
+    fn make_domain() -> Result<core::Domain, io::Error> {
+        Ok(persistence::WithTransactionLog::new(
+            ttl::Lifetimes::new(core::Data::empty())
+        )?)
+    }
 
     #[test]
     fn adding() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         assert_eq!(st.length("key"), 0);
         st.append("key", "1", false);
         st.append("key", "2", false);
@@ -142,7 +179,7 @@ mod tests {
 
     #[test]
     fn add_to_existing() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         assert_eq!(st.append("key", "element", true), 0);
         assert_eq!(st.append("key", "element", false), 1);
         assert_eq!(st.append("key", "element", true), 2);
@@ -152,8 +189,17 @@ mod tests {
     }
 
     #[test]
+    fn set() {
+        let mut st = make_domain().unwrap();
+        assert_eq!(st.set("key", 0, "element3"), false);
+        st.append("key", "element2", false);
+        assert_eq!(st.set("key", 0, "element"), true);
+        assert_eq!(st.range("key", 0, 10), vec!["element".to_string()]);
+    }
+
+    #[test]
     fn range() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         
         for i in 1..10 {
             st.append("key", &i.to_string(), false);

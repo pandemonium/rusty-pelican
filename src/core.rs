@@ -13,17 +13,22 @@ use crate::generic;
 use crate::connections;
 use crate::server;
 use crate::ttl;
+use crate::persistence;
 
 use parser::*;
 
-pub type Domain = ttl::Lifetimes<Data>;
+pub type Domain = persistence::WithTransactionLog<ttl::Lifetimes<Data>>;
 
 #[derive(Clone)]
 pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 
 impl DomainContext {
-    pub fn new(data: Data) -> Self {
-        Self(sync::Arc::new(sync::RwLock::new(ttl::Lifetimes::new(data))))
+    pub fn new(data: Data) -> Result<Self, io::Error> {
+        Ok(Self(sync::Arc::new(sync::RwLock::new(
+            persistence::WithTransactionLog::new(
+                ttl::Lifetimes::new(data)
+            )?
+        ))))
     }
 
     pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<Domain>, io::Error> {
@@ -52,7 +57,7 @@ impl Data {
     pub fn empty() -> Self {
         Self { 
             lists:   collections::HashMap::new(),
-            strings: collections::HashMap::new(), 
+            strings: collections::HashMap::new(),
         }
     }
 
@@ -66,8 +71,14 @@ trait Executive {
     fn apply(&self, command: Command) -> Result<Message, io::Error>;
 }
 
+struct CommandContext<C> {
+    command: C,
+    message: Message,
+}
+
 impl Executive for DomainContext {
     fn apply(&self, command: Command) -> Result<Message, io::Error> {
+//        self.for_writing()?.record_write(todo!())?;
         match command {
             Command::Lists(command)                => lists::apply(self, command),
             Command::Strings(command)              => keyvalue::apply(self, command),
@@ -92,7 +103,7 @@ impl RunLoop {
     pub fn make(data: Data, interface: &str) -> Result<Self, io::Error> {
         let listener = net::TcpListener::bind(interface)?;
         Ok(Self {
-            state: DomainContext::new(data),
+            state: DomainContext::new(data)?,
             socket_server: listener,
         })
     }
@@ -124,8 +135,10 @@ impl RunLoop {
     }
 
     fn handle_command(state: &DomainContext, reader: &mut io::BufReader<&net::TcpStream>) -> Result<Message, io::Error> {
-        let mut request = RequestState::empty();
+        let mut request = ParseState::empty();
         request.parse_message(reader).and_then(|message|
+            /* Commands that write, need their Message added
+               to the TransactionLog. */
             Command::try_from(message).and_then(|command| state.apply(command))
         )
     }

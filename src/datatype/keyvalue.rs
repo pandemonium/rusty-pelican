@@ -63,13 +63,21 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
-    use super::collections::VecDeque;
+    use super::*;
     use crate::core;
-    use super::KeyValue;
+    use crate::persistence;
+    use crate::ttl;
+    use collections::VecDeque;
+
+    fn make_domain() -> Result<core::Domain, io::Error> {
+        Ok(persistence::WithTransactionLog::new(
+            ttl::Lifetimes::new(core::Data::empty())
+        )?)
+    }
 
     #[test]
     fn set() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         st.set("apan:1", "value");
         assert_eq!(st.strings.get("apan:1"), Some(&"value".to_string()));
         assert_eq!(st.strings.len(), 1);
@@ -83,7 +91,7 @@ mod tests {
 
     #[test]
     fn get() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         assert_eq!(st.get("apan:1").map_err(|e| e.to_string()), Ok("value".to_string()));
@@ -92,7 +100,7 @@ mod tests {
 
     #[test]
     fn mget() {
-        let mut st = core::Domain::new(core::Data::empty());
+        let mut st = make_domain().unwrap();
         st.set("apan:1", "value");
         st.set("apan:2", "not_value");
         st.set("apan:4", "something else");

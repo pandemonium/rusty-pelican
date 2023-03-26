@@ -6,6 +6,7 @@ mod generic;
 mod connections;
 mod server;
 mod ttl;
+mod persistence;
 
 use std::io;
 use std::path;
