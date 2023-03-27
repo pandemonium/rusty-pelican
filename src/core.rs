@@ -34,8 +34,12 @@ impl DomainContext {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
+    fn replay_transactions(&self) -> Result<persistence::ReplayView, io::Error> {
+        self.for_reading()?.transaction_log().replay()
+    }
+
     pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
-        for message in self.for_reading()?.transaction_log().replay()?.iter() {
+        for message in self.replay_transactions()?.iter() {
             Command::try_from(&message).and_then(|command|
                 self.apply(CommandContext::new(command, message))
             )?;

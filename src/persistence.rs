@@ -14,7 +14,7 @@ pub trait WriteTransactionSink {
 
 impl <A> WriteTransactionSink for WithTransactionLog<A> {
     fn record_write(&mut self, message: &resp::Message) -> Result<(), io::Error> {
-        if self.replaying {
+        if !self.replaying {
             println!("record_write: appending to transaction log");
             self.log.append(message.clone())
         } else {
