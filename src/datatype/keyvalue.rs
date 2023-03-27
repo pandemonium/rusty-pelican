@@ -5,6 +5,7 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 use std::time;
+use crate::persistence::WriteTransactionSink;
 
 pub trait KeyValue {
     fn set(&mut self, key: &str, value: &str);
@@ -40,11 +41,13 @@ impl KeyValue for core::Domain {
 
 pub fn apply(
     state: &core::DomainContext,
-    command: commands::StringsApi,
+    command: core::CommandContext<commands::StringsApi>,
 ) -> Result<resp::Message, io::Error> {
-    match command {
+    match &*command {
         commands::StringsApi::Set(key, value) => {
-            state.for_writing()?.set(&key, &value);
+            let mut st = state.for_writing()?;
+            st.set(&key, &value);
+            st.record_write(&command.request_message())?;
             Ok(resp::Message::SimpleString("OK".to_string()))
         },
         commands::StringsApi::Get(key) =>
@@ -71,7 +74,7 @@ mod tests {
 
     fn make_domain() -> Result<core::Domain, io::Error> {
         Ok(persistence::WithTransactionLog::new(
-            ttl::Lifetimes::new(core::Data::empty())
+            ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }
 

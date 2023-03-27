@@ -5,22 +5,22 @@ use std::str;
 use crate::resp::*;
 
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConnectionManagement {
     SetClientName(String), SelectDatabase(i32), Ping(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ServerManagement {
     DbSize, Command(CommandOption), Info(Topic),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Topic {
     Keyspace, Server, Named(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Generic {
     Ttl(String),
     Expire(String, u64),
@@ -33,12 +33,12 @@ pub enum Generic {
     Type(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CommandOption {
     Empty, Docs
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ListApi {
     Length(String),
     Append(String, Vec<String>, bool),
@@ -47,14 +47,14 @@ pub enum ListApi {
     Range(String, i32, i32),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StringsApi {
     Set(String, String),
     Get(String),
     Mget(Vec<String>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     ConnectionManagement(ConnectionManagement),
     ServerManagement(ServerManagement),
@@ -69,7 +69,7 @@ impl Command {
         Err(io::Error::new(io::ErrorKind::InvalidInput, "Unknown or incomplete command."))
     }
 
-    fn unknown(command: Message) -> Result<Self, io::Error> {
+    fn unknown(command: &Message) -> Result<Self, io::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some([unknown @ ..]) => Ok(Command::Unknown(unknown.join(" "))),
             _otherwise           => Self::wrong_category(),
@@ -86,9 +86,9 @@ impl Command {
     }
 }
 
-impl TryFrom<Message> for Command {
+impl TryFrom<&Message> for Command {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         println!("Command: {command}");
         ListApi::try_from(command.clone()).map(Command::Lists)
             .or_else(|_| StringsApi::try_from(command.clone()).map(Command::Strings))
@@ -252,23 +252,23 @@ mod tests {
     #[test]
     fn lists() {
         assert_eq!(
-            Command::try_from(make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
+            Command::try_from(&make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
             Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], false)),
         );
         assert_eq!(
-            Command::try_from(make_command(vec!["LPUSHX", "mylist", "Kalle"])).unwrap(),
+            Command::try_from(&make_command(vec!["LPUSHX", "mylist", "Kalle"])).unwrap(),
             Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], true)),
         );
         assert_eq!(
-            Command::try_from(make_command(vec!["RPUSH", "mylist", "Kalle"])).unwrap(),
+            Command::try_from(&make_command(vec!["RPUSH", "mylist", "Kalle"])).unwrap(),
             Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], false)),
         );
         assert_eq!(
-            Command::try_from(make_command(vec!["RPUSHX", "mylist", "Kalle"])).unwrap(),
+            Command::try_from(&make_command(vec!["RPUSHX", "mylist", "Kalle"])).unwrap(),
             Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], true)),
         );
         assert_eq!(
-            Command::try_from(make_command(vec!["LLEN", "mylist"])).unwrap(),
+            Command::try_from(&make_command(vec!["LLEN", "mylist"])).unwrap(),
             Command::Lists(ListApi::Length("mylist".to_string())),
         );
     }

@@ -14,23 +14,38 @@ pub trait WriteTransactionSink {
 
 impl <A> WriteTransactionSink for WithTransactionLog<A> {
     fn record_write(&mut self, message: &resp::Message) -> Result<(), io::Error> {
-        self.log.append(message.clone())
+        if self.replaying {
+            println!("record_write: appending to transaction log")
+            self.log.append(message.clone())
+        } else {
+            Ok(println!("record_write: ignoring"))
+        }
     }
 }
 
-pub struct WithTransactionLog<Underlying> {
+pub struct WithTransactionLog<Wrapped> {
     log:        TransactionLog,
-    underlying: Underlying,
+    underlying: Wrapped,
+    replaying:  bool,
 }
 
-impl <A> WithTransactionLog<A> {
-    pub fn new(underlying: A) -> Result<Self, io::Error> {
+impl <Wrapped> WithTransactionLog<Wrapped> {
+    pub fn new(underlying: Wrapped) -> Result<Self, io::Error> {
         let default_path = path::Path::new("data/transactions.log");
-        
+
         Ok(Self {
             log: TransactionLog::new(default_path)?,
             underlying: underlying,
+            replaying: true,
         })
+    }
+
+    pub fn transaction_log(&self) -> &TransactionLog {
+        &self.log
+    }
+
+    pub fn finalize_replay(&mut self) {
+        self.replaying = false;
     }
 }
 
@@ -48,14 +63,14 @@ impl <A> DerefMut for WithTransactionLog<A> {
     }
 }
 
-struct ReplayView(fs::File);
+pub struct ReplayView(fs::File);
 
 impl ReplayView {
     fn new(file: fs::File) -> Self {
         Self(file)
     }
 
-    fn iter(&self) -> impl Iterator<Item = resp::Message> {
+    pub fn iter(&self) -> impl Iterator<Item = resp::Message> {
         let reader = io::BufReader::new(&self.0);
         let mut state = ParseState::empty();
 
@@ -71,8 +86,8 @@ impl ReplayView {
     }
 }
 
-struct TransactionLog {
-    path: Box<path::Path>,
+pub struct TransactionLog {
+    path: Box<path::Path>,  /* Why does this need a Box? */
     aof: fs::File,
 }
 
@@ -80,7 +95,7 @@ impl TransactionLog {
     fn new(at: &path::Path) -> Result<Self, io::Error> {
         Ok(Self {
             path: at.into(),
-            aof:  fs::OpenOptions::new().append(true).create(true).open(at)?
+            aof:  fs::OpenOptions::new().append(true).create(true).open(at)?,
         })
     }
 
@@ -94,7 +109,7 @@ impl TransactionLog {
         self.aof.sync_all()
     }
 
-    fn replay(&self) -> Result<ReplayView, io::Error> {
+    pub fn replay(&self) -> Result<ReplayView, io::Error> {
         Ok(ReplayView::new(fs::File::open(&self.path)?))
     }
 }
@@ -103,8 +118,7 @@ impl TransactionLog {
 mod tests {
     use super::*;
     use std::env::temp_dir;
-    use std::iter;
-    use arbitrary::{*, unstructured::ArbitraryIter};
+    use arbitrary::*;
     use rand::Rng;
 
     fn truncate(path: &path::Path) -> Result<(), io::Error> {

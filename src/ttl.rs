@@ -85,7 +85,7 @@ mod tests {
 
     fn make_domain() -> Result<core::Domain, io::Error> {
         Ok(persistence::WithTransactionLog::new(
-            ttl::Lifetimes::new(core::Data::empty())
+            ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }
 

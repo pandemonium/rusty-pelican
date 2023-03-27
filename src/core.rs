@@ -1,10 +1,10 @@
 use std::collections;
-use std::path::Path;
 use std::thread;
 use std::sync;
 use std::io;
 use std::io::prelude::*;
 use std::net;
+use std::ops::Deref;
 
 use crate::commands::*;
 use crate::resp::*;
@@ -14,21 +14,16 @@ use crate::connections;
 use crate::server;
 use crate::ttl;
 use crate::persistence;
-
 use parser::*;
 
-pub type Domain = persistence::WithTransactionLog<ttl::Lifetimes<Data>>;
+pub type Domain = persistence::WithTransactionLog<ttl::Lifetimes<Dataset>>;
 
 #[derive(Clone)]
 pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 
 impl DomainContext {
-    pub fn new(data: Data) -> Result<Self, io::Error> {
-        Ok(Self(sync::Arc::new(sync::RwLock::new(
-            persistence::WithTransactionLog::new(
-                ttl::Lifetimes::new(data)
-            )?
-        ))))
+    pub fn new(domain: Domain) -> Result<Self, io::Error> {
+        Ok(Self(sync::Arc::new(sync::RwLock::new(domain))))
     }
 
     pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<Domain>, io::Error> {
@@ -38,9 +33,21 @@ impl DomainContext {
     pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<Domain>, io::Error> {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
+
+    pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
+        for message in self.for_reading()?.transaction_log().replay()?.iter() {
+            Command::try_from(&message).and_then(|command|
+                self.apply(CommandContext::new(command, message))
+            )?;
+        }
+
+        self.for_writing()?.finalize_replay();
+
+        Ok(())
+    }
 }
 
-impl ttl::Expungeable for Data {
+impl ttl::Expungeable for Dataset {
     type Key = String;
     fn expunge(&mut self, id: &Self::Key) {
         self.lists.remove(id);
@@ -48,43 +55,61 @@ impl ttl::Expungeable for Data {
     }
 }
 
-pub struct Data {
+pub struct Dataset {
     pub lists:   collections::HashMap<String, collections::VecDeque<String>>,
     pub strings: collections::HashMap<String, String>,
 }
 
-impl Data {
+impl Dataset {
     pub fn empty() -> Self {
         Self { 
             lists:   collections::HashMap::new(),
             strings: collections::HashMap::new(),
         }
     }
-
-    pub fn restore_from_disk(&mut self, _home: &Path) -> Result<(), io::Error> {
-        println!("Loading transaction log.");
-        Ok(())
-    }
 }
 
 trait Executive {
-    fn apply(&self, command: Command) -> Result<Message, io::Error>;
+    fn apply(&self, command: CommandContext<Command>) -> Result<Message, io::Error>;
 }
 
-struct CommandContext<C> {
-    command: C,
+#[derive(Clone)]
+pub struct CommandContext<A: Clone> {
+    command: A,
     message: Message,
 }
 
+impl <A: Clone> Deref for CommandContext<A> {
+    type Target = A;
+
+    fn deref(&self) -> &Self::Target {
+        &self.command
+    }
+}
+
+impl <A: Clone> CommandContext<A> {
+    fn new(command: A, message: Message) -> Self {
+        Self { command, message }
+    }
+
+    pub fn request_message(&self) -> Message {
+        self.message.clone()
+    }
+}
+
 impl Executive for DomainContext {
-    fn apply(&self, command: Command) -> Result<Message, io::Error> {
-//        self.for_writing()?.record_write(todo!())?;
-        match command {
-            Command::Lists(command)                => lists::apply(self, command),
-            Command::Strings(command)              => keyvalue::apply(self, command),
-            Command::Generic(command)              => generic::apply(self, command),
-            Command::ConnectionManagement(command) => connections::apply(self, command),
-            Command::ServerManagement(command)     => server::apply(self, command),
+    fn apply(&self, command: CommandContext<Command>) -> Result<Message, io::Error> {
+        match &*command {
+            Command::Lists(sub_command) =>
+                lists::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+            Command::Strings(sub_command) => 
+                keyvalue::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+            Command::Generic(sub_command) => 
+                generic::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+            Command::ConnectionManagement(sub_command) => 
+                connections::apply(self, sub_command.clone()),
+            Command::ServerManagement(sub_command) => 
+                server::apply(self, sub_command.clone()),
             Command::Unknown(name) =>
                 Ok(Message::Error { 
                     prefix: ErrorPrefix::Err,
@@ -99,11 +124,11 @@ pub struct RunLoop {
     socket_server: net::TcpListener,
 }
 
-impl RunLoop {
-    pub fn make(data: Data, interface: &str) -> Result<Self, io::Error> {
+impl RunLoop {    
+    pub fn make(domain: DomainContext, interface: &str) -> Result<Self, io::Error> {
         let listener = net::TcpListener::bind(interface)?;
         Ok(Self {
-            state: DomainContext::new(data)?,
+            state: domain,
             socket_server: listener,
         })
     }
@@ -136,11 +161,11 @@ impl RunLoop {
 
     fn handle_command(state: &DomainContext, reader: &mut io::BufReader<&net::TcpStream>) -> Result<Message, io::Error> {
         let mut request = ParseState::empty();
-        request.parse_message(reader).and_then(|message|
-            /* Commands that write, need their Message added
-               to the TransactionLog. */
-            Command::try_from(message).and_then(|command| state.apply(command))
-        )
+        request.parse_message(reader).and_then(|message| {
+            Command::try_from(&message).and_then(|command|
+                state.apply(CommandContext::new(command, message))
+            )
+        })
     }
 }
 

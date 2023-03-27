@@ -2,8 +2,9 @@ use std::io;
 use crate::commands;
 use crate::core;
 use crate::resp;
-use crate::resp::Message;
 use std::time;
+use crate::persistence::WriteTransactionSink;
+use crate::resp::Message;
 
 pub enum ScanResult {
     Complete(Vec<String>),
@@ -126,9 +127,9 @@ impl From<Ttl> for Message {
 
 pub fn apply(
     state: &core::DomainContext,
-    command: commands::Generic,
+    command: core::CommandContext<commands::Generic>,
 )  -> Result<resp::Message, io::Error> {
-    match command {
+    match &*command {
         commands::Generic::Keys(pattern) => 
             Ok(Message::make_bulk_array(
                 state.for_reading()?.filter_keys(&pattern).as_slice()
@@ -136,7 +137,7 @@ pub fn apply(
         commands::Generic::Scan { cursor, pattern, count, tpe } =>
             Ok(Message::from(
                 state.for_reading()?
-                     .scan_keys(cursor, pattern.as_deref(), count, tpe.as_deref())
+                     .scan_keys(*cursor, pattern.as_deref(), *count, tpe.as_deref())
             )),
         commands::Generic::Ttl(key) =>
             Ok(Message::from(
@@ -144,11 +145,13 @@ pub fn apply(
             )),
         commands::Generic::Expire(key, ttl) => {
             /* There are return values here. 1 for set, 0 for non-existant key. */
-            state.for_writing()?.register_ttl(
+            let mut st = state.for_writing()?;
+            st.register_ttl(
                 &key.to_string(), 
                 time::Instant::now(), 
-                time::Duration::from_secs(ttl)
+                time::Duration::from_secs(*ttl)
             );
+            st.record_write(&command.request_message())?;
             Ok(Message::Integer(1))
         },
         commands::Generic::Exists(key) =>

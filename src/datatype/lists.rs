@@ -6,6 +6,7 @@ use std::collections;
 use crate::commands;
 use crate::core;
 use crate::resp;
+use crate::persistence::WriteTransactionSink;
 
 pub trait List {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
@@ -95,24 +96,21 @@ impl List for core::Domain {
     }
 }
 
-pub fn is_write(command: &commands::ListApi) -> bool {
-    todo!()
-}
-
 pub fn apply(
     state:   &core::DomainContext,
-    command: commands::ListApi
+    command: core::CommandContext<commands::ListApi>
 ) -> Result<resp::Message, io::Error> {
-    match command {
+    match &*command {
         commands::ListApi::Length(key) =>
             Ok(resp::Message::Integer(
-                state.for_writing()?.length(&key) as i64
+                state.for_reading()?.length(&key) as i64
             )),
         commands::ListApi::Append(key, elements, to_existing) => {
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
-                return_value = st.append(&key, &element, to_existing)
+                return_value = st.append(&key, &element, *to_existing);
+                st.record_write(&command.request_message())?
             }
             Ok(resp::Message::Integer(return_value as i64))
         },
@@ -120,22 +118,26 @@ pub fn apply(
             let mut st = state.for_writing()?;
             let mut return_value = 0;
             for element in elements {
-                return_value = st.prepend(&key, &element, to_existing)
+                return_value = st.prepend(&key, &element, *to_existing);
+                st.record_write(&command.request_message())?
             }
             Ok(resp::Message::Integer(return_value as i64))
         },
-        commands::ListApi::Set(key, index, element) =>
-            if state.for_writing()?.set(&key, index, &element) {
+        commands::ListApi::Set(key, index, element) => {
+            let mut st = state.for_writing()?;
+            if st.set(&key, *index, &element) {
+                st.record_write(&command.request_message())?;
                 Ok(resp::Message::SimpleString("OK".to_string()))
             } else {
                 Ok(resp::Message::Error { 
                     prefix: resp::ErrorPrefix::Err,
                     message: "Index out of range".to_string()
                 })
-            },
+            }
+        },
         commands::ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range(&key, start, stop).as_slice()
+                state.for_reading()?.range(&key, *start, *stop).as_slice()
             )),
     }
 }
@@ -151,7 +153,7 @@ mod tests {
 
     fn make_domain() -> Result<core::Domain, io::Error> {
         Ok(persistence::WithTransactionLog::new(
-            ttl::Lifetimes::new(core::Data::empty())
+            ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }
 
