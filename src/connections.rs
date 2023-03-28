@@ -14,6 +14,6 @@ pub fn apply(
         commands::ConnectionManagement::SelectDatabase(_database) => 
             Ok(Message::SimpleString("OK".to_string())),
         commands::ConnectionManagement::Ping(message) => 
-            Ok(Message::SimpleString(message.to_string())),
+            Ok(Message::SimpleString(message)),
     }
 }

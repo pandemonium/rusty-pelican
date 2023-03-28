@@ -109,8 +109,7 @@ impl Generic for core::Domain {
     fn key_exists(&self, key: &str) -> bool {
         self.strings.keys()
             .chain(self.lists.keys())
-            .find(|k| *k == key)
-            .is_some()
+            .any(|k| *k == key)
     }
 }
 
@@ -131,7 +130,7 @@ pub fn apply(
     match &*command {
         commands::Generic::Keys(pattern) => 
             Ok(Message::make_bulk_array(
-                state.for_reading()?.filter_keys(&pattern).as_slice()
+                state.for_reading()?.filter_keys(pattern).as_slice()
             )),
         commands::Generic::Scan { cursor, pattern, count, tpe } =>
             Ok(Message::from(
@@ -140,7 +139,7 @@ pub fn apply(
             )),
         commands::Generic::Ttl(key) =>
             Ok(Message::from(
-                state.for_reading()?.get_ttl(&key)
+                state.for_reading()?.get_ttl(key)
             )),
         commands::Generic::Expire(key, ttl) => {
             /* There are return values here. 1 for set, 0 for non-existant key. */

@@ -58,7 +58,7 @@ impl Display for Message {
             Message::BulkString(s) => write!(f, "{s}"),
             Message::Array(xs) => {
                 write!(f, "Array({}", xs.len())?;
-                for (x, i) in xs.into_iter().zip((0..).into_iter()) {
+                for (x, i) in xs.iter().zip(0..) {
                     write!(f, "({i}){x},")?
                 }
                 write!(f, ")")?;
@@ -148,7 +148,7 @@ impl Message {
 
     pub fn try_as_bulk_array(&self) -> Option<Vec<&str>> {
         self.as_array_contents()?
-            .into_iter()
+            .iter()
             .map(|v| v.try_as_bulk_string_content())
             .collect()
     }
@@ -261,7 +261,7 @@ pub mod parser {
         }
 
         pub fn parse(line: &str) -> Token {
-            if line.len() > 0 {
+            if !line.is_empty() {
                 let prefix = &line[0..1];
                 let suffix = &line[1..];
                 Token::produce(prefix, suffix, line)

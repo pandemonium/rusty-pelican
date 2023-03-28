@@ -21,7 +21,7 @@ pub fn apply(
         commands::ServerManagement::Info(commands::Topic::Keyspace) => {
             let keys = state.for_reading()?.filter_keys("*");
             let keyspace = format!("# Keyspace\r\ndb0:keys={},expires=0,avg_ttl=0\r\n", keys.len());
-            Ok(resp::Message::BulkString(keyspace.to_string()))
+            Ok(resp::Message::BulkString(keyspace))
         },
         commands::ServerManagement::Info(commands::Topic::Server) =>
             Ok(resp::Message::BulkString(

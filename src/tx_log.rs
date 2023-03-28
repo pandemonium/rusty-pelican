@@ -4,6 +4,7 @@ use std::io::{BufRead, Write};
 use std::path;
 use std::ops::{Deref, DerefMut};
 use std::time;
+use std::str;
 use serde::{Deserialize, Serialize};
 use base64::{
     Engine as _, 
@@ -12,7 +13,7 @@ use base64::{
 
 use crate::resp;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct Revision(usize);
 
 impl Revision {
@@ -21,17 +22,6 @@ impl Revision {
     }
 }
 
-impl Default for Revision {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-/* What is a good format for this file? Lines of Base 64-encoded bincode entries?
-    Requirements:
-    - Be able to append LogEntry:s as they come, stored as records;
-    - Read records as a stream so that the entire file isn't needed in memory.
-*/
 #[derive(Serialize, Deserialize)]
 struct LogEntry {
     at:       time::SystemTime,
@@ -84,9 +74,9 @@ impl <Wrapped> LoggedTransactions<Wrapped> {
         let default_path = path::Path::new("data/transactions.log");
 
         Ok(Self {
-            log:        LogFile::new(default_path)?,
-            underlying: underlying,
-            replaying:  true,
+            log: LogFile::new(default_path)?,
+            underlying,
+            replaying: true,
         })
     }
 
@@ -113,22 +103,52 @@ impl <A> DerefMut for LoggedTransactions<A> {
     }
 }
 
-pub struct ReplayView(fs::File);
+pub struct ReplayView {
+    file: fs::File,
+    since: Revision,
+}
 
 impl ReplayView {
-    fn new(file: fs::File) -> Self {
-        Self(file)
+    fn new(file: fs::File, since: Revision) -> Self {
+        Self { file, since }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Result<resp::Message, io::Error>> + '_ {
-        let reader = io::BufReader::new(&self.0);
+        let reader = io::BufReader::new(&self.file);
+        reader.lines()
+              .map(|record| { LogEntry::try_from(record?) })
+              .skip_while(|entry| {
+                entry.as_ref().map_or(false, |e| e.revision < self.since)
+              })
+              .map(|record| record?.content.parse())
+    }
+}
 
-        reader.lines().into_iter().map(|line| {
-            line.and_then(|record| {
-                let entry = LogFile::try_deserialize_entry(&record)?;
-                entry.content.parse()
-            })
-        })
+impl TryFrom<String> for LogEntry {
+    type Error = io::Error;
+
+    /* Error handling is really bad at this point. */
+
+    fn try_from(record: String) -> Result<Self, Self::Error> {
+        let bytes = base64_codec.decode(record).map_err(|e|
+            io::Error::new(io::ErrorKind::Other, e.to_string())
+        )?;
+        bincode::deserialize(&bytes).map_err(|e|
+            io::Error::new(io::ErrorKind::Other, e.to_string())
+        )
+    }
+}
+
+impl TryFrom<LogEntry> for String {
+    type Error = io::Error;
+
+    /* Error handling is really bad at this point. */
+
+    fn try_from(entry: LogEntry) -> Result<Self, Self::Error> {
+        let data = bincode::serialize(&entry).map_err(|e|
+            io::Error::new(io::ErrorKind::Other, e.to_string())
+        )?;
+        Ok(base64_codec.encode(data))
     }
 }
 
@@ -146,29 +166,17 @@ impl LogFile {
     }
 
     fn append(&mut self, entry: LogEntry) -> Result<(), io::Error> {
-        let record = Self::try_serialize_entry(&entry)?;
+        let record: String = entry.try_into()?;
         self.file.write_all(format!("{record}\r\n").as_bytes())
         /* if now > fs_sync deadline { file.fs_sync() } */
-    }
-
-    fn try_serialize_entry(entry: &LogEntry) -> Result<String, io::Error> { 
-        let data = bincode::serialize(&entry).unwrap(); /* De-unwrap:ify. */
-        let record = base64_codec.encode(&data);
-        Ok(record)
-    }
-
-    fn try_deserialize_entry(record: &str) -> Result<LogEntry, io::Error> {
-        let bytes = base64_codec.decode(record).unwrap();  /* De-unwrap:ify. */
-        let entry = bincode::deserialize(&bytes).unwrap(); /* De-unwrap:ify. */
-        Ok(entry)
     }
 
     fn sync(&self) -> Result<(), io::Error> {
         self.file.sync_all()
     }
 
-    pub fn replay(&self) -> Result<ReplayView, io::Error> {
-        Ok(ReplayView::new(fs::File::open(&self.path)?))
+    pub fn replay(&self, since: &Revision) -> Result<ReplayView, io::Error> {
+        Ok(ReplayView::new(fs::File::open(&self.path)?, since.clone()))
     }
 }
 
@@ -177,12 +185,7 @@ mod tests {
     use super::*;
     use std::env::temp_dir;
     use arbitrary::*;
-    use rand::Rng;
-
-    fn truncate(path: &path::Path) -> Result<(), io::Error> {
-        fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
-        Ok(())
-    }
+    use rand::{distributions::Alphanumeric, Rng};
 
     fn log_entry(m: resp::Message) -> LogEntry {
         LogEntry { 
@@ -192,18 +195,55 @@ mod tests {
         }
     }
 
+    fn generate_name() -> String {
+        rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(25)
+            .map(char::from)
+            .collect()
+    }
+
+    fn temp_file() -> path::PathBuf {
+        let file_name = generate_name();
+        temp_dir().with_file_name(file_name)
+    }
+
+    #[test]
+    fn discards_stale_prefix() {
+        fn mk_entry(rev: &Revision, msg: resp::Message) -> LogEntry {
+            LogEntry::new(time::SystemTime::now(), rev, &msg)
+        }
+
+        fn mk_string(text: &str) -> resp::Message {
+            resp::Message::SimpleString(text.to_string())
+        }
+
+        let path = temp_file();
+        let mut log = LogFile::new(&path).unwrap();
+
+        let rev = Revision::default();
+        log.append(mk_entry(&rev, mk_string("OK"))).unwrap();
+        log.append(mk_entry(&rev.succeeding(), mk_string("OK2"))).unwrap();
+        log.append(mk_entry(&rev.succeeding().succeeding(), mk_string("OK3"))).unwrap();
+
+        let log = LogFile::new(&path).unwrap();
+        assert_eq!(
+            log.replay(&rev.succeeding()).unwrap().iter().collect::<Result<Vec<resp::Message>, io::Error>>().unwrap(),
+            vec![mk_string("OK2"), mk_string("OK3")]
+        )
+    }
+
     #[test]
     fn end_to_end() {
-        let path = temp_dir().with_file_name("transactions.log");
-        truncate(&path).unwrap();
-
+        let path = temp_file();
         let mut log = LogFile::new(&path).unwrap();
+
         log.append(log_entry(resp::Message::BulkString("Hi, mom".to_string()))).unwrap();
         log.append(log_entry(resp::Message::Integer(427))).unwrap();
 
         let log = LogFile::new(&path).unwrap();
         assert_eq!(
-            log.replay().unwrap().iter().collect::<Result<Vec<resp::Message>, io::Error>>().unwrap(), 
+            log.replay(&Revision::default()).unwrap().iter().collect::<Result<Vec<resp::Message>, io::Error>>().unwrap(), 
             vec![
                 resp::Message::BulkString("Hi, mom".to_string()),
                 resp::Message::Integer(427)
@@ -218,10 +258,9 @@ mod tests {
         let mut u = Unstructured::new(&random_bytes);
         let ms = u.arbitrary::<Vec<resp::Message>>().unwrap();
 
-        let path = temp_dir().with_file_name("transactions2.log");
-        truncate(&path).unwrap();
-
+        let path = temp_file();
         let mut log = LogFile::new(&path).unwrap();
+
         for m in ms.iter() {
             log.append(log_entry(m.clone())).unwrap();
         }
@@ -229,7 +268,7 @@ mod tests {
 
         let log = LogFile::new(&path).unwrap();
         assert_eq!(
-            log.replay().unwrap().iter().collect::<Result<Vec<resp::Message>, io::Error>>().unwrap(),
+            log.replay(&Revision::default()).unwrap().iter().collect::<Result<Vec<resp::Message>, io::Error>>().unwrap(),
             ms
         );
     }

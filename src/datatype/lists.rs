@@ -72,21 +72,16 @@ impl List for core::Domain {
     }
 
     fn set(&mut self, key: &str, index: usize, element: &str) -> bool {
-        let insertion =
+        matches!(
             self.lists
                 .entry(key.to_string())
                 .and_modify(|list|
                     if let Some(existing) = list.get_mut(index) {
                         *existing = element.to_string()
                     }
-                 );
-
-        /* Is this the way? */
-        if let collections::hash_map::Entry::Occupied(_) = insertion {
-            true
-        } else {
-            false
-        }
+                 ),
+            collections::hash_map::Entry::Occupied(_)
+        )
     }
 
     fn length(&self, key: &str) -> usize {
@@ -102,27 +97,27 @@ pub fn apply(
     match &*command {
         commands::ListApi::Length(key) =>
             Ok(resp::Message::Integer(
-                state.for_reading()?.length(&key) as i64
+                state.for_reading()?.length(key) as i64
             )),
         commands::ListApi::Append(key, elements, to_existing) => {
             state.apply_transaction(&command, |data| {
-                let new_length = elements.into_iter().fold(0, |_, element| {
-                    data.append(&key, element, *to_existing)
+                let new_length = elements.iter().fold(0, |_, element| {
+                    data.append(key, element, *to_existing)
                 });
                 resp::Message::Integer(new_length as i64)
             })
         },
         commands::ListApi::Prepend(key, elements, to_existing) => {
             state.apply_transaction(&command, |data| {
-                let new_length = elements.into_iter().fold(0, |_, element| {
-                    data.prepend(&key, element, *to_existing)
+                let new_length = elements.iter().fold(0, |_, element| {
+                    data.prepend(key, element, *to_existing)
                 });
                 resp::Message::Integer(new_length as i64)
             })
         },
         commands::ListApi::Set(key, index, element) => {
             state.apply_transaction(&command, |data| {
-                if data.set(&key, *index, &element) {
+                if data.set(key, *index, element) {
                     resp::Message::SimpleString("OK".to_string())
                 } else {
                     resp::Message::Error {
@@ -134,7 +129,7 @@ pub fn apply(
         },
         commands::ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range(&key, *start, *stop).as_slice()
+                state.for_reading()?.range(key, *start, *stop).as_slice()
             )),
     }
 }

@@ -3,7 +3,6 @@ use std::hash;
 use std::collections;
 use std::time;
 use std::fmt;
-use std::io;
 
 pub trait Expungeable {
     type Key: PartialEq + Eq + hash::Hash + Clone + fmt::Debug;
@@ -34,7 +33,7 @@ impl <Underlying: Expungeable> Lifetimes<Underlying> {
         Self {
             expires:    collections::BTreeMap::new(),
             ttls:       collections::HashMap::new(),
-            underlying: underlying,
+            underlying,
         }
     }
 
@@ -77,6 +76,7 @@ impl <Underlying: Expungeable> Lifetimes<Underlying> {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use super::*;
     use crate::core;
     use crate::datatype::keyvalue::*;

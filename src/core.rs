@@ -56,7 +56,8 @@ impl DomainContext {
     }
 
     fn replay_transactions(&self) -> Result<tx_log::ReplayView, io::Error> {
-        self.for_reading()?.transaction_log().replay()
+        let domain = self.for_reading()?;
+        domain.transaction_log().replay(&domain.revision())
     }
 
     pub fn apply_transaction_log(&self) -> Result<(), io::Error> {

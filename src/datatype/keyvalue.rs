@@ -13,7 +13,7 @@ pub trait KeyValue {
 }
 
 fn string_prefix(xs: &collections::VecDeque<String>) -> String {
-    xs.into_iter().take(5)
+    xs.iter().take(5)
       .map(|s| s.to_string()).collect::<Vec<_>>()
       .join(",")
 }
@@ -45,13 +45,13 @@ pub fn apply(
     match &*command {
         commands::StringsApi::Set(key, value) => {
             state.apply_transaction(&command, |data| {
-                data.set(&key, &value);
+                data.set(key, value);
                 resp::Message::SimpleString("OK".to_string())
             })
         },
         commands::StringsApi::Get(key) =>
             Ok(resp::Message::BulkString(
-                state.for_reading()?.get(&key)?                
+                state.for_reading()?.get(key)?                
             )),
         commands::StringsApi::Mget(keys) => {
             let keys = keys.iter().map(|s| s.as_str()).collect();
