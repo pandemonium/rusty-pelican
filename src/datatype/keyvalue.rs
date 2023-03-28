@@ -5,7 +5,6 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 use std::time;
-use crate::persistence::WriteTransactionSink;
 
 pub trait KeyValue {
     fn set(&mut self, key: &str, value: &str);
@@ -45,10 +44,10 @@ pub fn apply(
 ) -> Result<resp::Message, io::Error> {
     match &*command {
         commands::StringsApi::Set(key, value) => {
-            let mut st = state.for_writing()?;
-            st.set(&key, &value);
-            st.record_write(&command.request_message())?;
-            Ok(resp::Message::SimpleString("OK".to_string()))
+            state.apply_transaction(&command, |data| {
+                data.set(&key, &value);
+                resp::Message::SimpleString("OK".to_string())
+            })
         },
         commands::StringsApi::Get(key) =>
             Ok(resp::Message::BulkString(
@@ -68,12 +67,12 @@ pub fn apply(
 mod tests {
     use super::*;
     use crate::core;
-    use crate::persistence;
+    use crate::tx_log;
     use crate::ttl;
     use collections::VecDeque;
 
     fn make_domain() -> Result<core::Domain, io::Error> {
-        Ok(persistence::WithTransactionLog::new(
+        Ok(tx_log::LoggedTransactions::new(
             ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }

@@ -13,16 +13,20 @@ use crate::generic;
 use crate::connections;
 use crate::server;
 use crate::ttl;
-use crate::persistence;
+use crate::tx_log;
+use crate::tx_log::WriteTransactionSink;
 use parser::*;
 
-pub type Domain = persistence::WithTransactionLog<ttl::Lifetimes<Dataset>>;
+pub type Domain = tx_log::LoggedTransactions<ttl::Lifetimes<Dataset>>;
 
 #[derive(Clone)]
 pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 
 impl DomainContext {
     pub fn new(domain: Domain) -> Result<Self, io::Error> {
+        /* Is Arc really needed here? It's not really passed around.
+           RwLock is not clonable. Replace Arc with Box perhaps.
+         */
         Ok(Self(sync::Arc::new(sync::RwLock::new(domain))))
     }
 
@@ -30,22 +34,40 @@ impl DomainContext {
         self.0.read().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
-    pub fn for_writing(&self) -> Result<sync::RwLockWriteGuard<Domain>, io::Error> {
+    pub fn begin_write(&self) -> Result<sync::RwLockWriteGuard<Domain>, io::Error> {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
-    fn replay_transactions(&self) -> Result<persistence::ReplayView, io::Error> {
+    pub fn apply_transaction<F, A, C>(
+        &self, 
+        command: &CommandContext<C>,
+        unit_of_work: F
+    ) -> Result<A, io::Error>
+    where 
+        F: FnOnce(&mut Domain) -> A,
+        C: Clone,
+    {
+        let mut domain = self.begin_write()?;
+        let return_value = unit_of_work(&mut domain);
+        let revision = &domain.revision();
+        domain.record_evidence(revision, &command.request_message())?;
+        domain.bump_revision();
+        Ok(return_value)
+    }
+
+    fn replay_transactions(&self) -> Result<tx_log::ReplayView, io::Error> {
         self.for_reading()?.transaction_log().replay()
     }
 
     pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
         for message in self.replay_transactions()?.iter() {
+            let message = message?.clone();
             Command::try_from(&message).and_then(|command|
                 self.apply(CommandContext::new(command, message))
             )?;
         }
 
-        self.for_writing()?.finalize_replay();
+        self.begin_write()?.finalize_replay();
 
         Ok(())
     }
@@ -59,17 +81,26 @@ impl ttl::Expungeable for Dataset {
     }
 }
 
+/* Why are the fields public? */
 pub struct Dataset {
     pub lists:   collections::HashMap<String, collections::VecDeque<String>>,
     pub strings: collections::HashMap<String, String>,
+    revision:    tx_log::Revision,
 }
 
 impl Dataset {
     pub fn empty() -> Self {
         Self { 
-            lists:   collections::HashMap::new(),
-            strings: collections::HashMap::new(),
+            lists:    collections::HashMap::new(),
+            strings:  collections::HashMap::new(),
+            revision: tx_log::Revision::default(),
         }
+    }
+
+    pub fn revision(&self) -> tx_log::Revision { self.revision.clone() }
+
+    pub fn bump_revision(&mut self) {
+        self.revision = self.revision().succeeding()
     }
 }
 

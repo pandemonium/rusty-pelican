@@ -6,7 +6,6 @@ use std::collections;
 use crate::commands;
 use crate::core;
 use crate::resp;
-use crate::persistence::WriteTransactionSink;
 
 pub trait List {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
@@ -106,34 +105,32 @@ pub fn apply(
                 state.for_reading()?.length(&key) as i64
             )),
         commands::ListApi::Append(key, elements, to_existing) => {
-            let mut st = state.for_writing()?;
-            let mut return_value = 0;
-            for element in elements {
-                return_value = st.append(&key, &element, *to_existing);
-                st.record_write(&command.request_message())?
-            }
-            Ok(resp::Message::Integer(return_value as i64))
+            state.apply_transaction(&command, |data| {
+                let new_length = elements.into_iter().fold(0, |_, element| {
+                    data.append(&key, element, *to_existing)
+                });
+                resp::Message::Integer(new_length as i64)
+            })
         },
         commands::ListApi::Prepend(key, elements, to_existing) => {
-            let mut st = state.for_writing()?;
-            let mut return_value = 0;
-            for element in elements {
-                return_value = st.prepend(&key, &element, *to_existing);
-                st.record_write(&command.request_message())?
-            }
-            Ok(resp::Message::Integer(return_value as i64))
+            state.apply_transaction(&command, |data| {
+                let new_length = elements.into_iter().fold(0, |_, element| {
+                    data.prepend(&key, element, *to_existing)
+                });
+                resp::Message::Integer(new_length as i64)
+            })
         },
         commands::ListApi::Set(key, index, element) => {
-            let mut st = state.for_writing()?;
-            if st.set(&key, *index, &element) {
-                st.record_write(&command.request_message())?;
-                Ok(resp::Message::SimpleString("OK".to_string()))
-            } else {
-                Ok(resp::Message::Error { 
-                    prefix: resp::ErrorPrefix::Err,
-                    message: "Index out of range".to_string()
-                })
-            }
+            state.apply_transaction(&command, |data| {
+                if data.set(&key, *index, &element) {
+                    resp::Message::SimpleString("OK".to_string())
+                } else {
+                    resp::Message::Error {
+                        prefix: resp::ErrorPrefix::Err,
+                        message: "Index out of range".to_string()
+                    }
+                }
+            })
         },
         commands::ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
@@ -148,11 +145,11 @@ mod tests {
     use std::collections::VecDeque;
     use crate::core;
     use crate::ttl;
-    use crate::persistence;
+    use crate::tx_log;
     use super::List;
 
     fn make_domain() -> Result<core::Domain, io::Error> {
-        Ok(persistence::WithTransactionLog::new(
+        Ok(tx_log::LoggedTransactions::new(
             ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }

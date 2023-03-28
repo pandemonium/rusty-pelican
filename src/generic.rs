@@ -3,7 +3,6 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 use std::time;
-use crate::persistence::WriteTransactionSink;
 use crate::resp::Message;
 
 pub enum ScanResult {
@@ -145,14 +144,14 @@ pub fn apply(
             )),
         commands::Generic::Expire(key, ttl) => {
             /* There are return values here. 1 for set, 0 for non-existant key. */
-            let mut st = state.for_writing()?;
-            st.register_ttl(
-                &key.to_string(), 
-                time::Instant::now(), 
-                time::Duration::from_secs(*ttl)
-            );
-            st.record_write(&command.request_message())?;
-            Ok(Message::Integer(1))
+            state.apply_transaction(&command, |data| {
+                data.register_ttl(
+                    &key.to_string(), 
+                    time::Instant::now(), 
+                    time::Duration::from_secs(*ttl)
+                );
+                Message::Integer(1)
+            })
         },
         commands::Generic::Exists(key) =>
             Ok(Message::Integer(

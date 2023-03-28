@@ -6,12 +6,12 @@ mod generic;
 mod connections;
 mod server;
 mod ttl;
-mod persistence;
+mod tx_log;
 
 use std::io;
 
 fn main() -> Result<(), io::Error> {
-    let state = persistence::WithTransactionLog::new(
+    let state = tx_log::LoggedTransactions::new(
         ttl::Lifetimes::new(core::Dataset::empty())
     )?;
     let domain = core::DomainContext::new(state)?;

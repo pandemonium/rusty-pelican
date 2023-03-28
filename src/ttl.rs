@@ -80,11 +80,11 @@ mod tests {
     use super::*;
     use crate::core;
     use crate::datatype::keyvalue::*;
-    use crate::persistence;
+    use crate::tx_log;
     use crate::ttl;
 
     fn make_domain() -> Result<core::Domain, io::Error> {
-        Ok(persistence::WithTransactionLog::new(
+        Ok(tx_log::LoggedTransactions::new(
             ttl::Lifetimes::new(core::Dataset::empty())
         )?)
     }
