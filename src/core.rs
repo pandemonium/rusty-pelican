@@ -18,6 +18,7 @@ use crate::ttl;
 use crate::ttl::Lifetimes;
 use crate::tx_log;
 use crate::tx_log::WriteTransactionSink;
+use crate::snapshots::Snapshots;
 use parser::*;
 
 pub type Domain = tx_log::LoggedTransactions<ttl::Lifetimes<Dataset>>;
@@ -57,6 +58,15 @@ impl DomainContext {
         Ok(return_value)
     }
 
+    pub fn restore(&mut self) -> Result<(), io::Error> {
+        self.restore_snapshot()?;
+        self.apply_transaction_log()
+    }
+
+    fn restore_snapshot(&mut self) -> Result<(), io::Error> {
+        self.begin_write()?.restore_from_snapshot()
+    }
+
     /* The interaction between the RwLock and getting at the
        Transaction Log feels off. 
 
@@ -70,7 +80,7 @@ impl DomainContext {
 
     /* The interaction between the RwLock and getting at the
        Transaction Log feels off. */
-       pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
+    fn apply_transaction_log(&self) -> Result<(), io::Error> {
         for message in self.replay_transactions()?.iter() {
             let message = message?.clone();
             Command::try_from(&message).and_then(|command|
@@ -94,11 +104,14 @@ impl ttl::Expungeable for Dataset {
 
 impl snapshots::Snapshots for Lifetimes<Dataset> {
     fn save_snapshot(&self) -> Result<(), io::Error> {
-        snapshots::allocate_snapshot_file()?.put(self)
+        snapshots::allocate_new()?.put(self)
     }
 
-    fn load_snapshot(&mut self) -> Result<(), io::Error> {
-        todo!()
+    fn restore_from_snapshot(&mut self) -> Result<(), io::Error> {
+        match snapshots::most_recent()? {
+            Some(snapshot) => Ok(*self = snapshot.get::<Self>()?),
+            None           => Ok(()),
+        }
     }
 }
 

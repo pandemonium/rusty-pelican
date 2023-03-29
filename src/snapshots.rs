@@ -2,7 +2,7 @@ use std::fs;
 use std::path;
 use std::io;
 
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 
 #[derive(Clone)]
 pub struct SnapshotFile {
@@ -16,9 +16,18 @@ impl SnapshotFile {
     }
 
     pub fn put<S: Serialize>(&self, data: &S) -> Result<(), io::Error> {
-        let open = fs::File::options().write(true).create_new(true).open(self.path.as_path());
-        let writer = io::BufWriter::new(open?);
+        let file = fs::File::options().write(true).create_new(true).open(self.path.as_path());
+        let writer = io::BufWriter::new(file?);
         bincode::serialize_into(writer, data).map_err(|e|
+            io::Error::new(io::ErrorKind::Other, e.to_string())
+        )
+    }
+
+    pub fn get<D>(&self) -> Result<D, io::Error>
+    where D: DeserializeOwned {   /* Wtf. */
+        let file = fs::File::options().read(true).open(self.path.as_path());
+        let reader = io::BufReader::new(file?);
+        bincode::deserialize_from(reader).map_err(|e|
             io::Error::new(io::ErrorKind::Other, e.to_string())
         )
     }
@@ -26,7 +35,7 @@ impl SnapshotFile {
 
 pub trait Snapshots {
     fn save_snapshot(&self) -> Result<(), io::Error>;
-    fn load_snapshot(&mut self) -> Result<(), io::Error>;
+    fn restore_from_snapshot(&mut self) -> Result<(), io::Error>;
 }
 
 fn mk_snapshot_file(index: usize) -> SnapshotFile {
@@ -35,12 +44,17 @@ fn mk_snapshot_file(index: usize) -> SnapshotFile {
     SnapshotFile::new(path.to_path_buf(), index)
 }
 
-pub fn allocate_snapshot_file() -> Result<SnapshotFile, io::Error> {
+pub fn most_recent() -> Result<Option<SnapshotFile>, io::Error> {
     let mut files = vec![];
     find_all(&path::Path::new("./data"), &mut files)?;
     Ok(files.iter().max_by_key(|f| f.index)
-            .map(|f| f.clone())
-            .unwrap_or_else(|| mk_snapshot_file(0))
+             .map(|f| f.clone()))
+}
+
+pub fn allocate_new() -> Result<SnapshotFile, io::Error> {
+    Ok(most_recent()?.map_or_else(
+        || mk_snapshot_file(0), 
+        |f| mk_snapshot_file(f.index + 1))
     )
 }
 

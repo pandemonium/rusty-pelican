@@ -15,8 +15,8 @@ fn main() -> Result<(), io::Error> {
     let state = tx_log::LoggedTransactions::new(
         ttl::Lifetimes::new(core::Dataset::empty())
     )?;
-    let domain = core::DomainContext::new(state)?;
-    domain.apply_transaction_log()?;
+    let mut domain = core::DomainContext::new(state)?;
+    domain.restore()?;
 
     println!("main: make run-loop");
     let run_loop = core::RunLoop::make(domain, "127.0.0.1:8080")?;
