@@ -55,7 +55,7 @@ impl List for core::Domain {
         if !to_existing {
             xs.or_insert_with(|| collections::VecDeque::from(vec![element.to_string()]));
         }
-        self.expunge_expired(&time::Instant::now());
+        self.expunge_expired(&time::SystemTime::now());
         self.length(key)
     }
 

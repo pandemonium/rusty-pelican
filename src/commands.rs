@@ -12,7 +12,7 @@ pub enum ConnectionManagement {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerManagement {
-    DbSize, Command(CommandOption), Info(Topic),
+    DbSize, Command(CommandOption), Info(Topic), BgSave,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,6 +132,7 @@ impl TryFrom<Message> for ServerManagement {
             Some(["INFO" | "info", "server"])               => Ok(ServerManagement::Info(Topic::Server)),
             Some(["INFO" | "info", topic])                  => Ok(ServerManagement::Info(Topic::Named(topic.to_string()))),
             Some(["INFO" | "info"])                         => Ok(ServerManagement::Info(Topic::Named("topic.to_string()".to_string()))),
+            Some(["BGSAVE" | "bgsave"])                     => Ok(ServerManagement::BgSave),
             _otherwise                                      => Command::wrong_category(),
         }
     }

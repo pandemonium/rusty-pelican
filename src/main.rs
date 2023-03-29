@@ -7,6 +7,7 @@ mod connections;
 mod server;
 mod ttl;
 mod tx_log;
+mod snapshots;
 
 use std::io;
 

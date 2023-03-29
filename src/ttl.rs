@@ -1,34 +1,33 @@
 use std::ops::{Deref, DerefMut};
-use std::hash;
 use std::collections;
 use std::time;
-use std::fmt;
+use serde::{Deserialize, Serialize};
 
 pub trait Expungeable {
-    type Key: PartialEq + Eq + hash::Hash + Clone + fmt::Debug;
-    fn expunge(&mut self, id: &Self::Key);
+    fn expunge(&mut self, id: &str);
 }
 
-pub struct Lifetimes<Underlying: Expungeable> {
-    expires:    collections::BTreeMap<time::Instant, Underlying::Key>,
-    ttls:       collections::HashMap<Underlying::Key, time::Instant>,
+#[derive(Deserialize, Serialize)]
+pub struct Lifetimes<Underlying: Expungeable + Serialize> {
+    expires:    collections::BTreeMap<time::SystemTime, String>,
+    ttls:       collections::HashMap<String, time::SystemTime>,
     underlying: Underlying,
 }
 
-impl <A: Expungeable> Deref for Lifetimes<A> {
+impl <A: Expungeable + Serialize> Deref for Lifetimes<A> {
     type Target = A;
     fn deref(&self) -> &Self::Target {
         &self.underlying
     }
 }
 
-impl <A: Expungeable> DerefMut for Lifetimes<A> {
+impl <A: Expungeable + Serialize> DerefMut for Lifetimes<A> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.underlying
     }
 }
 
-impl <Underlying: Expungeable> Lifetimes<Underlying> {
+impl <Underlying: Expungeable + Serialize> Lifetimes<Underlying> {
     pub fn new(underlying: Underlying) -> Self {
         Self {
             expires:    collections::BTreeMap::new(),
@@ -37,7 +36,7 @@ impl <Underlying: Expungeable> Lifetimes<Underlying> {
         }
     }
 
-    pub fn expunge_expired(&mut self, now: &time::Instant) {
+    pub fn expunge_expired(&mut self, now: &time::SystemTime) {
         while let Some((expires, key)) = self.expires.pop_first() {
             let expires_at = self.ttls.get(&key).unwrap_or(&expires);
             if expires_at < now {
@@ -52,25 +51,25 @@ impl <Underlying: Expungeable> Lifetimes<Underlying> {
 
     pub fn register_ttl(
         &mut self, 
-        key: &Underlying::Key, 
-        now: time::Instant, 
+        key: &str,
+        now: time::SystemTime, 
         ttl: time::Duration
     ) {
         let at = now + ttl;
         println!("register_ttl: ttl {:?} for {:?}", at, key);
-        self.ttls.entry(key.clone())
+        self.ttls.entry(key.to_string())
             .and_modify(|expires_at| *expires_at = at)
             .or_insert(at);
-        self.expires.insert(at, key.clone());
+        self.expires.insert(at, key.to_string());
         println!("register_ttl: ttls={:?}, expires={:?}", &self.ttls, &self.expires);
     }
 
     pub fn ttl_remaining(
         &self, 
-        key: &Underlying::Key, 
-        now: &time::Instant
+        key: &str,
+        now: &time::SystemTime
     ) -> Option<time::Duration> {
-        self.ttls.get(key).map(|expires_at| expires_at.duration_since(*now))
+        self.ttls.get(key).and_then(|expires_at| expires_at.duration_since(*now).ok())
     }
 }
 
@@ -92,7 +91,7 @@ mod tests {
     #[test]
     fn register_ttl() {
         let mut st = make_domain().unwrap();
-        let now = time::Instant::now();
+        let now = time::SystemTime::now();
         assert_eq!(st.ttl_remaining(&"key".to_string(), &now), None);
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(1));
         assert_eq!(
@@ -104,7 +103,7 @@ mod tests {
     #[test]
     fn expires_the_right_one() {
         let mut st = make_domain().unwrap();
-        let now = time::Instant::now();
+        let now = time::SystemTime::now();
         st.set("key", "value");
         st.register_ttl(&"key".to_string(), now, time::Duration::from_secs(0));
         assert_eq!(st.get("key").ok(), Some("value".to_string()));

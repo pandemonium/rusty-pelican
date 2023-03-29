@@ -5,6 +5,7 @@ use std::io;
 use std::io::prelude::*;
 use std::net;
 use std::ops::Deref;
+use serde::{Serialize, Deserialize};
 
 use crate::commands::*;
 use crate::resp::*;
@@ -12,7 +13,9 @@ use crate::datatype::*;
 use crate::generic;
 use crate::connections;
 use crate::server;
+use crate::snapshots;
 use crate::ttl;
+use crate::ttl::Lifetimes;
 use crate::tx_log;
 use crate::tx_log::WriteTransactionSink;
 use parser::*;
@@ -25,8 +28,7 @@ pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 impl DomainContext {
     pub fn new(domain: Domain) -> Result<Self, io::Error> {
         /* Is Arc really needed here? It's not really passed around.
-           RwLock is not clonable. Replace Arc with Box perhaps.
-         */
+           RwLock is not clonable. Replace Arc with Box perhaps. */
         Ok(Self(sync::Arc::new(sync::RwLock::new(domain))))
     }
 
@@ -50,17 +52,25 @@ impl DomainContext {
         let mut domain = self.begin_write()?;
         let return_value = unit_of_work(&mut domain);
         let revision = &domain.revision();
-        domain.record_evidence(revision, &command.request_message())?;
+        domain.record_evidence(revision, &command.transaction_message())?;
         domain.bump_revision();
         Ok(return_value)
     }
 
+    /* The interaction between the RwLock and getting at the
+       Transaction Log feels off. 
+
+       It's a separate function because replaying must not
+       hold either of the locks, since applying the 
+       transactions to domain will acquire the write lock. */
     fn replay_transactions(&self) -> Result<tx_log::ReplayView, io::Error> {
         let domain = self.for_reading()?;
         domain.transaction_log().replay(&domain.revision())
     }
 
-    pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
+    /* The interaction between the RwLock and getting at the
+       Transaction Log feels off. */
+       pub fn apply_transaction_log(&self) -> Result<(), io::Error> {
         for message in self.replay_transactions()?.iter() {
             let message = message?.clone();
             Command::try_from(&message).and_then(|command|
@@ -68,6 +78,7 @@ impl DomainContext {
             )?;
         }
 
+        /* What is this? */
         self.begin_write()?.finalize_replay();
 
         Ok(())
@@ -75,14 +86,23 @@ impl DomainContext {
 }
 
 impl ttl::Expungeable for Dataset {
-    type Key = String;
-    fn expunge(&mut self, id: &Self::Key) {
+    fn expunge(&mut self, id: &str) {
         self.lists.remove(id);
         self.strings.remove(id);
     }
 }
 
-/* Why are the fields public? */
+impl snapshots::Snapshots for Lifetimes<Dataset> {
+    fn save_snapshot(&self) -> Result<(), io::Error> {
+        snapshots::allocate_snapshot_file()?.put(self)
+    }
+
+    fn load_snapshot(&mut self) -> Result<(), io::Error> {
+        todo!()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct Dataset {
     pub lists:   collections::HashMap<String, collections::VecDeque<String>>,
     pub strings: collections::HashMap<String, String>,
@@ -102,7 +122,7 @@ impl Dataset {
 
     pub fn bump_revision(&mut self) {
         self.revision = self.revision().succeeding()
-    }
+    }    
 }
 
 trait Executive {
@@ -128,7 +148,7 @@ impl <A: Clone> CommandContext<A> {
         Self { command, message }
     }
 
-    pub fn request_message(&self) -> Message {
+    pub fn transaction_message(&self) -> Message {
         self.message.clone()
     }
 }
@@ -137,11 +157,11 @@ impl Executive for DomainContext {
     fn apply(&self, command: CommandContext<Command>) -> Result<Message, io::Error> {
         match &*command {
             Command::Lists(sub_command) =>
-                lists::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+                lists::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::Strings(sub_command) => 
-                keyvalue::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+                keyvalue::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::Generic(sub_command) => 
-                generic::apply(self, CommandContext::new(sub_command.clone(), command.request_message())),
+                generic::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::ConnectionManagement(sub_command) => 
                 connections::apply(self, sub_command.clone()),
             Command::ServerManagement(sub_command) => 
@@ -160,7 +180,7 @@ pub struct RunLoop {
     socket_server: net::TcpListener,
 }
 
-impl RunLoop {    
+impl RunLoop {
     pub fn make(domain: DomainContext, interface: &str) -> Result<Self, io::Error> {
         let listener = net::TcpListener::bind(interface)?;
         Ok(Self {

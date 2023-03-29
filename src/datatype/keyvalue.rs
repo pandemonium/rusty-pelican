@@ -21,7 +21,7 @@ fn string_prefix(xs: &collections::VecDeque<String>) -> String {
 impl KeyValue for core::Domain {
     fn set(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_string(), value.to_string());
-        self.expunge_expired(&time::Instant::now())
+        self.expunge_expired(&time::SystemTime::now())
     }
 
     fn get(&self, key: &str) -> Result<String, io::Error> {

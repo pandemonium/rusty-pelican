@@ -61,7 +61,7 @@ pub trait Generic {
 
 impl Generic for core::Domain {
     fn get_ttl(&self, key: &str) -> Ttl {
-        let now = time::Instant::now();
+        let now = time::SystemTime::now();
         match self.ttl_remaining(&key.to_string(), &now) {
             Some(ttl)                         => Ttl::ExpiresIn(ttl),
             None if self.filter_keys(key).is_empty() => Ttl::UnknownKey,
@@ -146,7 +146,7 @@ pub fn apply(
             state.apply_transaction(&command, |data| {
                 data.register_ttl(
                     &key.to_string(), 
-                    time::Instant::now(), 
+                    time::SystemTime::now(), 
                     time::Duration::from_secs(*ttl)
                 );
                 Message::Integer(1)

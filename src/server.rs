@@ -3,6 +3,7 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 use crate::generic::*;
+use crate::snapshots::Snapshots;
 
 pub fn apply(
     state:   &core::DomainContext,
@@ -28,10 +29,15 @@ pub fn apply(
                 "# Server\r\nredis_version:7.0.9\r\n".to_string()
             )),
         commands::ServerManagement::Info(commands::Topic::Named(topic)) =>
-            Ok(resp::Message::BulkString(format!("Info about {topic}")))
+            Ok(resp::Message::BulkString(format!("Info about {topic}"))),
 //            Ok(resp::Message::Error {
 //                prefix: resp::ErrorPrefix::Err,
 //                message: "Unsupported command".to_string(),
 //            }),
+        commands::ServerManagement::BgSave => {
+            /* thread::spawn(move || ... ) */
+            state.for_reading()?.save_snapshot()?;
+            Ok(resp::Message::SimpleString("OK".to_string()))
+        },
 }
 }
