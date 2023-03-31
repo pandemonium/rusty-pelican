@@ -2,7 +2,9 @@ use std::convert::TryFrom;
 use std::io;
 use std::fmt;
 use std::str;
+
 use crate::resp::*;
+use crate::datatype::*;
 
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,28 +41,13 @@ pub enum CommandOption {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ListApi {
-    Length(String),
-    Append(String, Vec<String>, bool),
-    Prepend(String, Vec<String>, bool),
-    Set(String, usize, String),
-    Range(String, i32, i32),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum StringsApi {
-    Set(String, String),
-    Get(String),
-    Mget(Vec<String>),
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     ConnectionManagement(ConnectionManagement),
     ServerManagement(ServerManagement),
     Generic(Generic),
-    Lists(ListApi),
-    Strings(StringsApi),
+    Lists(lists::ListApi),
+    Strings(keyvalues::StringsApi),
+    SortedSets(sorted_sets::SortedSetApi),
     Unknown(String),
 }
 
@@ -90,8 +77,8 @@ impl TryFrom<&Message> for Command {
     type Error = io::Error;
     fn try_from(command: &Message) -> Result<Self, Self::Error> {
         println!("Command: {command}");
-        ListApi::try_from(command.clone()).map(Command::Lists)
-            .or_else(|_| StringsApi::try_from(command.clone()).map(Command::Strings))
+        lists::ListApi::try_from(command.clone()).map(Command::Lists)
+            .or_else(|_| keyvalues::StringsApi::try_from(command.clone()).map(Command::Strings))
             .or_else(|_| ConnectionManagement::try_from(command.clone()).map(Command::ConnectionManagement))
             .or_else(|_| ServerManagement::try_from(command.clone()).map(Command::ServerManagement))
             .or_else(|_| Generic::try_from(command.clone()).map(Command::Generic))
@@ -177,42 +164,42 @@ impl TryFrom<Message> for Generic {
     }
 }
 
-impl TryFrom<Message> for ListApi {
+impl TryFrom<Message> for lists::ListApi {
     type Error = io::Error;
     fn try_from(value: Message) -> Result<Self, Self::Error> {
         match value.try_as_bulk_array().as_deref() {
             Some(["LRANGE" | "lrange", key, start, stop]) =>
-                Ok(ListApi::Range(
+                Ok(lists::ListApi::Range(
                     key.to_string(), Command::decode(start)?, Command::decode(stop)?
                 )),
             Some(["RPUSH" | "rpush", key, elements @ ..]) =>
-                Ok(ListApi::Append(
+                Ok(lists::ListApi::Append(
                     key.to_string(),
-                    elements.iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|&s| s.into()).collect(),
                     false,
                 )),
             Some(["RPUSHX" | "rpushx", key, elements @ ..]) =>
-                Ok(ListApi::Append(
+                Ok(lists::ListApi::Append(
                     key.to_string(),
-                    elements.iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|&s| s.into()).collect(),
                     true,
                 )),
             Some(["LPUSH" | "lpush", key, elements @ ..]) =>
-                Ok(ListApi::Prepend(
+                Ok(lists::ListApi::Prepend(
                     key.to_string(),
-                    elements.iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|&s| s.into()).collect(),
                     false,
                 )),
             Some(["LPUSHX" | "lpushx", key, elements @ ..]) =>
-                Ok(ListApi::Prepend(
+                Ok(lists::ListApi::Prepend(
                     key.to_string(),
-                    elements.iter().map(|s| s.to_string()).collect(),
+                    elements.iter().map(|&s| s.into()).collect(),
                     true,
                 )),
             Some(["LLEN" | "llen", key]) =>
-                Ok(ListApi::Length(key.to_string())),
+                Ok(lists::ListApi::Length(key.to_string())),
             Some(["LSET" | "lset", key, index, element]) =>
-                Ok(ListApi::Set(
+                Ok(lists::ListApi::Set(
                     key.to_string(), 
                     Command::decode(index)?,
                     element.to_string(),
@@ -223,16 +210,16 @@ impl TryFrom<Message> for ListApi {
     }
 }
 
-impl TryFrom<Message> for StringsApi {
+impl TryFrom<Message> for keyvalues::StringsApi {
     type Error = io::Error;
     fn try_from(command: Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["SET" | "set", key, value]) =>
-                Ok(StringsApi::Set(key.to_string(), value.to_string())),
+                Ok(keyvalues::StringsApi::Set(key.to_string(), value.to_string())),
             Some(["GET" | "get", key]) =>
-                Ok(StringsApi::Get(key.to_string())),
+                Ok(keyvalues::StringsApi::Get(key.to_string())),
             Some(["MGET" | "mget", keys @ ..]) =>
-                Ok(StringsApi::Mget(keys.to_vec().iter().map(|s| s.to_string()).collect())),
+                Ok(keyvalues::StringsApi::Mget(keys.iter().map(|&s| s.into()).collect())),
             _otherwise =>
                 Command::wrong_category(),
         }
@@ -246,7 +233,7 @@ mod tests {
 
     fn make_command(words: Vec<&str>) -> Message {
         Message::Array(
-            words.iter().map(|s| Message::BulkString(s.to_string())).collect()
+            words.iter().map(|&s| Message::BulkString(s.into())).collect()
         )
     }
 
@@ -254,23 +241,23 @@ mod tests {
     fn lists() {
         assert_eq!(
             Command::try_from(&make_command(vec!["LPUSH", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], false)),
+            Command::Lists(lists::ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], false)),
         );
         assert_eq!(
             Command::try_from(&make_command(vec!["LPUSHX", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], true)),
+            Command::Lists(lists::ListApi::Prepend("mylist".to_string(), vec!["Kalle".to_string()], true)),
         );
         assert_eq!(
             Command::try_from(&make_command(vec!["RPUSH", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], false)),
+            Command::Lists(lists::ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], false)),
         );
         assert_eq!(
             Command::try_from(&make_command(vec!["RPUSHX", "mylist", "Kalle"])).unwrap(),
-            Command::Lists(ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], true)),
+            Command::Lists(lists::ListApi::Append("mylist".to_string(), vec!["Kalle".to_string()], true)),
         );
         assert_eq!(
             Command::try_from(&make_command(vec!["LLEN", "mylist"])).unwrap(),
-            Command::Lists(ListApi::Length("mylist".to_string())),
+            Command::Lists(lists::ListApi::Length("mylist".to_string())),
         );
     }
 }

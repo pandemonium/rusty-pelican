@@ -56,12 +56,10 @@ impl <Underlying: Expungeable + Serialize> Lifetimes<Underlying> {
         ttl: time::Duration
     ) {
         let at = now + ttl;
-        println!("register_ttl: ttl {:?} for {:?}", at, key);
         self.ttls.entry(key.to_string())
             .and_modify(|expires_at| *expires_at = at)
             .or_insert(at);
         self.expires.insert(at, key.to_string());
-        println!("register_ttl: ttls={:?}, expires={:?}", &self.ttls, &self.expires);
     }
 
     pub fn ttl_remaining(
@@ -78,7 +76,7 @@ mod tests {
     use std::io;
     use super::*;
     use crate::core;
-    use crate::datatype::keyvalue::*;
+    use crate::datatype::keyvalues::*;
     use crate::tx_log;
     use crate::ttl;
 

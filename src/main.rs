@@ -15,10 +15,12 @@ fn main() -> Result<(), io::Error> {
     let state = tx_log::LoggedTransactions::new(
         ttl::Lifetimes::new(core::Dataset::empty())
     )?;
+
+    println!("Starting ...");
     let mut domain = core::DomainContext::new(state)?;
     domain.restore()?;
 
-    println!("main: make run-loop");
-    let run_loop = core::RunLoop::make(domain, "127.0.0.1:8080")?;
+    println!("Running.");
+    let run_loop = core::RunLoop::new(domain, "127.0.0.1:8080")?;
     run_loop.execute()
 }

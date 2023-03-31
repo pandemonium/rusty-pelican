@@ -14,7 +14,7 @@ impl ScanResult {
     const DEFAULT_CHUNK_SIZE: usize = 10;
 
     fn to_owned(xs: Vec<&str>) -> Vec<String> {
-        xs.into_iter().map(|x| x.into()).collect()   
+        xs.iter().map(|&x| x.into()).collect()   
     }
 
     fn complete(content: Vec<&str>) -> ScanResult {
@@ -62,10 +62,12 @@ pub trait Generic {
 impl Generic for core::Domain {
     fn get_ttl(&self, key: &str) -> Ttl {
         let now = time::SystemTime::now();
-        match self.ttl_remaining(&key.to_string(), &now) {
-            Some(ttl)                         => Ttl::ExpiresIn(ttl),
-            None if self.filter_keys(key).is_empty() => Ttl::UnknownKey,
-            None                              => Ttl::Eternal,
+        if let Some(ttl) = self.ttl_remaining(key, &now) {
+            Ttl::ExpiresIn(ttl)
+        } else if self.filter_keys(key).is_empty() {
+            Ttl::UnknownKey
+        } else {
+            Ttl::Eternal
         }
     }
 

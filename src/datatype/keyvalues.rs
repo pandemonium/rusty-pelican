@@ -6,7 +6,14 @@ use crate::core;
 use crate::resp;
 use std::time;
 
-pub trait KeyValue {
+#[derive(Clone, Debug, PartialEq)]
+pub enum StringsApi {
+    Set(String, String),
+    Get(String),
+    Mget(Vec<String>),
+}
+
+pub trait KeyValues {
     fn set(&mut self, key: &str, value: &str);
     fn get(&self, key: &str) -> Result<String, io::Error>;
     fn mget(&self, keys: Vec<&str>) -> Vec<Option<String>>;
@@ -18,7 +25,7 @@ fn string_prefix(xs: &collections::VecDeque<String>) -> String {
       .join(",")
 }
 
-impl KeyValue for core::Domain {
+impl KeyValues for core::Domain {
     fn set(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_string(), value.to_string());
         self.expunge_expired(&time::SystemTime::now())
@@ -40,20 +47,20 @@ impl KeyValue for core::Domain {
 
 pub fn apply(
     state: &core::DomainContext,
-    command: core::CommandContext<commands::StringsApi>,
+    command: core::CommandContext<StringsApi>,
 ) -> Result<resp::Message, io::Error> {
     match &*command {
-        commands::StringsApi::Set(key, value) => {
+        StringsApi::Set(key, value) => {
             state.apply_transaction(&command, |data| {
                 data.set(key, value);
                 resp::Message::SimpleString("OK".to_string())
             })
         },
-        commands::StringsApi::Get(key) =>
+        StringsApi::Get(key) =>
             Ok(resp::Message::BulkString(
                 state.for_reading()?.get(key)?                
             )),
-        commands::StringsApi::Mget(keys) => {
+        StringsApi::Mget(keys) => {
             let keys = keys.iter().map(|s| s.as_str()).collect();
             let elements = state.for_reading()?.mget(keys).into_iter().map(|value|
                 value.map_or(resp::Message::Nil, resp::Message::BulkString)

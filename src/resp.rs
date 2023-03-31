@@ -80,7 +80,7 @@ impl From<Message> for String {
             Message::Integer(i) => format!(":{i}\r\n"),
             Message::BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s),
             Message::Array(elements) => {
-                let xs: Vec<String> = elements.into_iter().map(String::from).collect();
+                let xs: Vec<String> = elements.into_iter().map(|s| s.into()).collect();
                 format!("*{}\r\n{}", xs.len(), xs.join(""))
             },
             Message::Nil => "$-1\r\n".to_string(),
@@ -126,17 +126,12 @@ impl Message {
 
     pub fn make_bulk_array(xs: &[String]) -> Self {
         Message::make_array(
-            xs.iter()
-              .map(|x| Message::BulkString(x.to_string()))
-              .collect()            
+            xs.iter().cloned().map(Message::BulkString).collect()
         )
     }
 
     fn try_as_bulk_string_content(&self) -> Option<&str> {
-        match self {
-            Message::BulkString(s) => Some(s),
-            _ => None,
-        }
+        if let Message::BulkString(s) = self { Some(s) } else { None }
     }
 
     fn as_array_contents(&self) -> Option<&Vec<Message>> {
@@ -184,9 +179,11 @@ pub mod parser {
                     Some(Ok(token_image)) => {
                         let token = Token::parse(&token_image);
                         self.add_token(token);
-                        match self.try_parse_message() {
-                            Some(message) => break Ok(message),
-                            None          => continue,
+
+                        if let Some(message) = self.try_parse_message() {
+                            break Ok(message)
+                        } else {
+                            continue
                         }
                     },
                     Some(Err(e)) => break Err(e),
@@ -323,7 +320,7 @@ pub mod parser {
             phrase.split("\r\n")
                   .map(Token::parse)
                   .collect::<Vec<Token>>();
-        parse_message(tokens.as_slice()).0
+        parse_message(&tokens).0
     }
 }
 

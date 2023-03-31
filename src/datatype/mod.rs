@@ -1,2 +1,3 @@
 pub mod lists;
-pub mod keyvalue;
+pub mod keyvalues;
+pub mod sorted_sets;

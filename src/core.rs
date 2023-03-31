@@ -108,26 +108,36 @@ impl snapshots::Snapshots for Lifetimes<Dataset> {
     }
 
     fn restore_from_snapshot(&mut self) -> Result<(), io::Error> {
-        match snapshots::most_recent()? {
-            Some(snapshot) => Ok(*self = snapshot.get::<Self>()?),
-            None           => Ok(()),
+        if let Some(snapshot) = snapshots::most_recent()? {
+            *self = snapshot.get::<Self>()?
         }
+        Ok(())
     }
 }
 
 #[derive(Deserialize, Serialize)]
+pub struct SortedSetEntry {
+    score: f64,
+    member: String,
+}
+
+type Keyed<A> = collections::HashMap<String, A>;
+
+#[derive(Deserialize, Serialize)]
 pub struct Dataset {
-    pub lists:   collections::HashMap<String, collections::VecDeque<String>>,
-    pub strings: collections::HashMap<String, String>,
-    revision:    tx_log::Revision,
+    pub lists:       Keyed<collections::VecDeque<String>>,
+    pub strings:     Keyed<String>,
+    pub sorted_sets: Keyed<sorted_sets::OrderedScores>,
+    revision:        tx_log::Revision,
 }
 
 impl Dataset {
     pub fn empty() -> Self {
         Self { 
-            lists:    collections::HashMap::new(),
-            strings:  collections::HashMap::new(),
-            revision: tx_log::Revision::default(),
+            lists:       collections::HashMap::new(),
+            strings:     collections::HashMap::new(),
+            sorted_sets: collections::HashMap::new(),
+            revision:    tx_log::Revision::default(),
         }
     }
 
@@ -172,7 +182,9 @@ impl Executive for DomainContext {
             Command::Lists(sub_command) =>
                 lists::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::Strings(sub_command) => 
-                keyvalue::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
+                keyvalues::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
+            Command::SortedSets(sub_command) =>
+                sorted_sets::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::Generic(sub_command) => 
                 generic::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::ConnectionManagement(sub_command) => 
@@ -194,7 +206,7 @@ pub struct RunLoop {
 }
 
 impl RunLoop {
-    pub fn make(domain: DomainContext, interface: &str) -> Result<Self, io::Error> {
+    pub fn new(domain: DomainContext, interface: &str) -> Result<Self, io::Error> {
         let listener = net::TcpListener::bind(interface)?;
         Ok(Self {
             state: domain,
@@ -228,7 +240,10 @@ impl RunLoop {
         }
     }
 
-    fn handle_command(state: &DomainContext, reader: &mut io::BufReader<&net::TcpStream>) -> Result<Message, io::Error> {
+    fn handle_command(
+        state: &DomainContext, 
+        reader: &mut io::BufReader<&net::TcpStream>
+    ) -> Result<Message, io::Error> {
         let mut request = ParseState::empty();
         request.parse_message(reader).and_then(|message| {
             Command::try_from(&message).and_then(|command|

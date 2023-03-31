@@ -116,10 +116,8 @@ impl ReplayView {
     pub fn iter(&self) -> impl Iterator<Item = Result<resp::Message, io::Error>> + '_ {
         let reader = io::BufReader::new(&self.file);
         reader.lines()
-              .map(|record| { LogEntry::try_from(record?) })
-              .skip_while(|entry| {
-                entry.as_ref().map_or(false, |e| e.revision < self.since)
-              })
+              .map(|record| LogEntry::try_from(record?))
+              .skip_while(|entry| entry.as_ref().map_or(false, |e| e.revision < self.since))
               .map(|record| record?.content.parse())
     }
 }
@@ -153,7 +151,7 @@ impl TryFrom<LogEntry> for String {
 }
 
 pub struct LogFile {
-    path: Box<path::Path>,  /* Why does this need a Box? */
+    path: path::PathBuf,
     file: fs::File,
 }
 
@@ -161,7 +159,7 @@ impl LogFile {
     fn new(at: &path::Path) -> Result<Self, io::Error> {
         Ok(Self {
             path: at.into(),
-            file: fs::OpenOptions::new().append(true).create(true).open(at)?,
+            file: fs::File::options().append(true).create(true).open(at)?,
         })
     }
 

@@ -7,7 +7,16 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 
-pub trait List {
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListApi {
+    Length(String),
+    Append(String, Vec<String>, bool),
+    Prepend(String, Vec<String>, bool),
+    Set(String, usize, String),
+    Range(String, i32, i32),
+}
+
+pub trait Lists {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String>;
 
     /* Replace `to_exixting` with a two-variant. */
@@ -20,7 +29,7 @@ pub trait List {
     fn length(&self, key: &str) -> usize;
 }
 
-impl List for core::Domain {
+impl Lists for core::Domain {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String> {
         let length = self.length(key) as i32;
         if start >= length {
@@ -92,14 +101,14 @@ impl List for core::Domain {
 
 pub fn apply(
     state:   &core::DomainContext,
-    command: core::CommandContext<commands::ListApi>
+    command: core::CommandContext<ListApi>
 ) -> Result<resp::Message, io::Error> {
     match &*command {
-        commands::ListApi::Length(key) =>
+        ListApi::Length(key) =>
             Ok(resp::Message::Integer(
                 state.for_reading()?.length(key) as i64
             )),
-        commands::ListApi::Append(key, elements, to_existing) => {
+        ListApi::Append(key, elements, to_existing) => {
             state.apply_transaction(&command, |data| {
                 let new_length = elements.iter().fold(0, |_, element| {
                     data.append(key, element, *to_existing)
@@ -107,7 +116,7 @@ pub fn apply(
                 resp::Message::Integer(new_length as i64)
             })
         },
-        commands::ListApi::Prepend(key, elements, to_existing) => {
+        ListApi::Prepend(key, elements, to_existing) => {
             state.apply_transaction(&command, |data| {
                 let new_length = elements.iter().fold(0, |_, element| {
                     data.prepend(key, element, *to_existing)
@@ -115,7 +124,7 @@ pub fn apply(
                 resp::Message::Integer(new_length as i64)
             })
         },
-        commands::ListApi::Set(key, index, element) => {
+        ListApi::Set(key, index, element) => {
             state.apply_transaction(&command, |data| {
                 if data.set(key, *index, element) {
                     resp::Message::SimpleString("OK".to_string())
@@ -127,7 +136,7 @@ pub fn apply(
                 }
             })
         },
-        commands::ListApi::Range(key, start, stop) =>
+        ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
                 state.for_reading()?.range(key, *start, *stop).as_slice()
             )),
@@ -141,7 +150,7 @@ mod tests {
     use crate::core;
     use crate::ttl;
     use crate::tx_log;
-    use super::List;
+    use super::Lists;
 
     fn make_domain() -> Result<core::Domain, io::Error> {
         Ok(tx_log::LoggedTransactions::new(
