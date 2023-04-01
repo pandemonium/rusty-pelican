@@ -226,6 +226,45 @@ impl TryFrom<Message> for keyvalues::StringsApi {
     }
 }
 
+impl TryFrom<Message> for sorted_sets::SortedSetApi {
+    type Error = io::Error;
+    fn try_from(command: Message) -> Result<Self, Self::Error> {
+        match command.try_as_bulk_array().as_deref() {
+            Some(["ZADD" | "zadd", key, args @ ..]) => {
+                let (options, entries) = sorted_sets::AddOptions::parse(args);
+                let entries = entries.windows(2).map(|pär| {
+                    match pär {
+                        [score, member] =>
+                            Command::decode(score).map(|score: f64| (score, member.to_string())),
+                        bad_company =>
+                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad format {:?}", bad_company))),
+                    }
+                }).collect::<Result<Vec<_>, Self::Error>>()?;
+
+                Ok(sorted_sets::SortedSetApi::Add { key: key.to_string(), entries, options, })
+            }
+            Some(["ZRANGE" | "zrange", key, start, stop, "BYSCORE" | "byscore"]) => {
+                Ok(sorted_sets::SortedSetApi::RangeByScore(
+                    key.to_string(), Command::decode(start)?, Command::decode(stop)?
+                ))
+            }
+            Some(["ZRANGE" | "zrange", key, start, stop]) => {
+                Ok(sorted_sets::SortedSetApi::RangeByRank(
+                    key.to_string(), Command::decode(start)?, Command::decode(stop)?
+                ))
+            }
+            Some(["ZRANK" | "zrank", key, member]) => {
+                Ok(sorted_sets::SortedSetApi::Rank(key.to_string(), member.to_string()))
+            }
+            Some(["ZSCORE" | "zscore", key, member]) => {
+                Ok(sorted_sets::SortedSetApi::Score(key.to_string(), member.to_string()))
+            }
+            _otherwise =>
+                Command::wrong_category(),
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {

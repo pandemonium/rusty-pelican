@@ -1,20 +1,17 @@
 use std::io;
-use std::cmp;
-use std::time;
 use std::collections;
 use serde::*;
 
-use crate::commands;
 use crate::core;
 use crate::resp;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SortedSetApi {
-    Add { key: String, entries: Vec<(f64, String)> },
+    Add { key: String, entries: Vec<(f64, String)>, options: AddOptions, },
     RangeByRank(String, usize, usize),
     RangeByScore(String, f64, f64),
-    Rank(String),
-    Score(String),
+    Rank(String, String),
+    Score(String, String),
 }
 
 pub struct MemberEntry {
@@ -29,43 +26,163 @@ impl MemberEntry {
     }
 }
 
-pub enum AddOption {
-    UpdateOnly,             /* XX */
-    AddOnly,                /* NX */
-    AddOrUpdateLessThan,    /* LT */
-    AddOrUpdateGreaterThan, /* GT */
+#[derive(Clone, Debug, PartialEq)]
+pub enum Only {
+    UpdateExisting,             /* XX */
+    AddNew,                     /* NX */
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum When {
+    LessThan,                   /* LT */
+    GreaterThan,                /* GT */
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MergePolicy {
+    Require(Only),              /* XX | NX */
+    UpdateExisting(When),       /* XX + (GT | LT) */
+    AddOrUpdate(When),          /* GT | LT */
+    Default,                    /* No options specified. */
+    Diverged(String),           /* Bad combination. */
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Return {
+    Added,                      /* Nothing */
+    Changed,                    /* CH */
+}
+
+impl Return {
+    fn default() -> Self { Return::Added }
+
+    fn parse(word: &str) -> Option<Return> {
+        if matches!(word, "CH" | "ch") {
+            Some(Return::Changed)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddOptions {
+    merge: MergePolicy,
+    and_return: Return,
+}
+
+impl Default for AddOptions {
+    fn default() -> Self {
+        Self::return_default(MergePolicy::Default)
+    }
+}
+
+impl AddOptions {
+    fn select_return(p: AddOptions, q: AddOptions, merge: MergePolicy) -> Self {
+        let and_return = if p.and_return == Return::Changed || q.and_return == Return::Changed {
+            Return::Changed
+        } else {
+            Return::Added
+        };
+
+        Self { merge, and_return }
+    }
+
+    fn merge_policy(&self) -> &MergePolicy {
+        &self.merge
+    }
+
+    fn return_default(merge: MergePolicy) -> Self {
+        Self { merge, and_return: Return::Added }
+    }
+
+    fn return_changed(merge: MergePolicy) -> Self {
+        Self { merge, and_return: Return::Changed }
+    }
+    fn is_recognized(word: &str) -> bool {
+        When::parse(word).is_some() || Only::parse(word).is_some() || Return::parse(word).is_some()
+    }
+
+    fn produce_option(word: &str) -> Option<Self> {
+        When::parse(word).map(|x| Self::return_default(MergePolicy::AddOrUpdate(x)))
+            .or_else(|| Only::parse(word).map(|x| Self::return_default(MergePolicy::Require(x))))
+            .or_else(|| Return::parse(word).map(|_| Self::return_changed(MergePolicy::Default)))
+    }
+
+    fn combine_options(lhs: Self, rhs: Self) -> Self {
+        match (lhs.merge_policy(), rhs.merge_policy()) {
+            (MergePolicy::AddOrUpdate(when), MergePolicy::Require(Only::UpdateExisting)) =>
+                Self::select_return(lhs.clone(), rhs.clone(), MergePolicy::UpdateExisting(when.clone())),
+            (MergePolicy::Require(Only::UpdateExisting), MergePolicy::AddOrUpdate(when)) =>
+                Self::select_return(lhs, rhs.clone(), MergePolicy::UpdateExisting(when.clone())),
+            otherwise =>
+                Self::return_default(MergePolicy::Diverged(format!("bad options: {:?}", otherwise))),
+        }
+    }
+
+    pub fn parse(phrase: &[&str]) -> (Self, Vec<String>) {
+        let mut words = phrase.iter();
+        let option = words.by_ref()
+            .take_while(|word| Self::is_recognized(word))
+            .filter_map(|word| Self::produce_option(word))
+            .reduce(|lhs, rhs| Self::combine_options(lhs, rhs))
+            .unwrap_or_else(|| Self::return_default(MergePolicy::Default));
+
+        (option, words.map(|x| x.to_string()).collect::<Vec<String>>())
+    }    
+}
+
+impl Only {
+    fn parse(word: &str) -> Option<Only> {
+        match word {
+            "XX" | "xx" => Some(Only::UpdateExisting),
+            "NX" | "nx" => Some(Only::AddNew),
+            _otherwise  => None,
+        }
+    }
+}
+
+impl When {
+    fn parse(word: &str) -> Option<When> {
+        match word {
+            "GT" | "gt" => Some(When::GreaterThan),
+            "LT" | "lt" => Some(When::LessThan),
+            _otherwise  => None,
+        }
+    }
 }
 
 pub trait SortedSet {
-    fn add(&mut self, key: &str, entries: &[(f64, &str)], merge: AddOption) -> usize;
+    fn add(&mut self, key: &str, entries: &[(f64, &str)], options: AddOptions) -> usize;
     fn range_by_rank(&self, key: &str, start: usize, stop: usize) -> Vec<MemberEntry>;
     fn range_by_score(&self, key: &str, start: f64, stop: f64) -> Vec<MemberEntry>;
     fn member_stats(&self, key: &str, member: &str) -> Option<MemberEntry>;
 }
 
 impl SortedSet for core::Domain {
-    fn add(&mut self, key: &str, entries: &[(f64, &str)], merge: AddOption) -> usize {
-        let mut added_count = 0;
+    fn add(&mut self, key: &str, entries: &[(f64, &str)], options: AddOptions) -> usize {
+        let mut count = 0;
         self.sorted_sets
-            .entry(key.into()).and_modify(|xs| {
+            .entry(key.into()).and_modify(|xs|
                 entries.iter().cloned().for_each(|(score, member)| {
                     xs.merge(score, member);
-                    added_count += 1;
-                });
-             })
+                    count += 1;
+                })
+             )
             .or_insert_with(|| {
                 let mut xs = OrderedScores::new();
                 entries.iter().cloned().for_each(|(score, member)| {
                     xs.merge(score, member);
-                    added_count += 1;
+                    count += 1;
                 });
                 xs
              });
-        added_count
+        count
     }
 
     fn range_by_rank(&self, key: &str, start: usize, stop: usize) -> Vec<MemberEntry> {
-        self.sorted_sets.get(key.into())
+        self.sorted_sets.get(key)
             .map_or(vec![], |xs|
                 xs.range_by_rank(start, stop).map(|(rank, (score, member))| {
                     MemberEntry::new(rank, score, &member)
@@ -74,11 +191,16 @@ impl SortedSet for core::Domain {
     }
 
     fn range_by_score(&self, key: &str, start: f64, stop: f64) -> Vec<MemberEntry> {
-        todo!()
+        self.sorted_sets.get(key)
+            .map_or(vec![], |xs|
+                xs.range_by_score(start, stop).map(|(rank, (score, member))| {
+                    MemberEntry::new(rank, score, &member)
+                }).collect()
+            )
     }
 
     fn member_stats(&self, key: &str, member: &str) -> Option<MemberEntry> {
-        todo!()
+        self.sorted_sets.get(key)?.member_stats(member)
     }
 }
 
@@ -86,14 +208,38 @@ pub fn apply(
     state:   &core::DomainContext,
     command: core::CommandContext<SortedSetApi>
 ) -> Result<resp::Message, io::Error> {
-//    match &*command {
-//        SortedSetApi::Add { key: (), entries: () } => {}
-//        SortedSetApi::RangeByRank(_, _, _) => todo!(),
-//        SortedSetApi::RangeByScore(_, _, _) => todo!(),
-//        SortedSetApi::Rank(_) => todo!(),
-//        SortedSetApi::Score(_) => todo!(),
-//    }
-    todo!()
+    match &*command {
+        SortedSetApi::Add { key, entries, options } =>
+            state.apply_transaction(&command, |data| {
+                /* Why is this necessary? */
+                let xs = entries.iter().map(|(a, b)| (*a, b.as_str())).collect::<Vec<(f64, &str)>>();
+                resp::Message::Integer(
+                    data.add(key, &xs, options.clone()) as i64
+                )
+            }),
+        SortedSetApi::RangeByRank(key, start, stop) =>
+            Ok(resp::Message::make_bulk_array(
+                state.for_reading()?.range_by_rank(&key, *start, *stop)
+                     .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
+                     .as_slice()
+            )),
+        SortedSetApi::RangeByScore(key, start, stop) => 
+            Ok(resp::Message::make_bulk_array(
+                state.for_reading()?.range_by_score(&key, *start, *stop)
+                    .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
+                    .as_slice()
+            )),
+        SortedSetApi::Rank(key, member) =>
+            Ok(resp::Message::Integer(
+                state.for_reading()?.member_stats(key, member)
+                     .map(|stat| stat.rank).unwrap_or(0) as i64
+            )),
+        SortedSetApi::Score(key, member) =>
+            Ok(resp::Message::BulkString(
+                state.for_reading()?.member_stats(key, member)
+                    .map(|stat| stat.score).unwrap_or(0f64).to_string()
+            )),
+}
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

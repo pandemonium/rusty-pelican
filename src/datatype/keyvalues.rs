@@ -1,7 +1,6 @@
 use std::collections;
 use std::io;
 
-use crate::commands;
 use crate::core;
 use crate::resp;
 use std::time;

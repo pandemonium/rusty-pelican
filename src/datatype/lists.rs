@@ -3,7 +3,6 @@ use std::cmp;
 use std::time;
 use std::collections;
 
-use crate::commands;
 use crate::core;
 use crate::resp;
 
