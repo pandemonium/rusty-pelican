@@ -83,7 +83,7 @@ impl AddOptions {
         let and_return = if p.and_return == Return::Changed || q.and_return == Return::Changed {
             Return::Changed
         } else {
-            Return::Added
+            Return::default()
         };
 
         Self { merge, and_return }
@@ -94,7 +94,7 @@ impl AddOptions {
     }
 
     fn return_default(merge: MergePolicy) -> Self {
-        Self { merge, and_return: Return::Added }
+        Self { merge, and_return: Return::default() }
     }
 
     fn return_changed(merge: MergePolicy) -> Self {
@@ -123,10 +123,10 @@ impl AddOptions {
 
     pub fn parse(phrase: &[&str]) -> (Self, Vec<String>) {
         let mut words = phrase.iter();
-        let option = words.by_ref()
+        let option = words.by_ref().cloned()
             .take_while(|word| Self::is_recognized(word))
-            .filter_map(|word| Self::produce_option(word))
-            .reduce(|lhs, rhs| Self::combine_options(lhs, rhs))
+            .filter_map(Self::produce_option)
+            .reduce(Self::combine_options)
             .unwrap_or_else(|| Self::return_default(MergePolicy::Default));
 
         (option, words.map(|x| x.to_string()).collect::<Vec<String>>())
@@ -219,13 +219,13 @@ pub fn apply(
             }),
         SortedSetApi::RangeByRank(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range_by_rank(&key, *start, *stop)
+                state.for_reading()?.range_by_rank(key, *start, *stop)
                      .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
                      .as_slice()
             )),
         SortedSetApi::RangeByScore(key, start, stop) => 
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range_by_score(&key, *start, *stop)
+                state.for_reading()?.range_by_score(key, *start, *stop)
                     .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
                     .as_slice()
             )),
@@ -273,7 +273,7 @@ impl OrderedScores {
 
     /* This should probably have the rank included. */
     fn range_by_score(&self, start: f64, stop: f64) -> impl Iterator<Item = (usize, (f64, String))> + '_ {
-        /* Make sure start < stop. (Otherwise, a reverse iteration is selected.) */
+        /* Make sure start < stop. */
         self.score_to_members
             .range(Score(start) ..= Score(stop))
             .flat_map(|(Score(score), members)|
@@ -328,7 +328,6 @@ impl OrderedScores {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -77,18 +77,19 @@ impl TryFrom<&Message> for Command {
     type Error = io::Error;
     fn try_from(command: &Message) -> Result<Self, Self::Error> {
         println!("Command: {command}");
-        lists::ListApi::try_from(command.clone()).map(Command::Lists)
-            .or_else(|_| keyvalues::StringsApi::try_from(command.clone()).map(Command::Strings))
-            .or_else(|_| ConnectionManagement::try_from(command.clone()).map(Command::ConnectionManagement))
-            .or_else(|_| ServerManagement::try_from(command.clone()).map(Command::ServerManagement))
-            .or_else(|_| Generic::try_from(command.clone()).map(Command::Generic))
+        lists::ListApi::try_from(command).map(Command::Lists)
+            .or_else(|_| keyvalues::StringsApi::try_from(command).map(Command::Strings))
+            .or_else(|_| sorted_sets::SortedSetApi::try_from(command).map(Command::SortedSets))
+            .or_else(|_| ConnectionManagement::try_from(command).map(Command::ConnectionManagement))
+            .or_else(|_| ServerManagement::try_from(command).map(Command::ServerManagement))
+            .or_else(|_| Generic::try_from(command).map(Command::Generic))
             .or_else(|_| Command::unknown(command))
     }
 }
 
-impl TryFrom<Message> for ConnectionManagement {
+impl TryFrom<&Message> for ConnectionManagement {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["CLIENT" | "client", "SETNAME" | "setname", name]) => 
                 Ok(ConnectionManagement::SetClientName(name.to_string())),
@@ -108,9 +109,9 @@ impl TryFrom<Message> for ConnectionManagement {
     }
 }
 
-impl TryFrom<Message> for ServerManagement {
+impl TryFrom<&Message> for ServerManagement {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["COMMAND" | "commands", "DOCS" | "docs"]) => Ok(ServerManagement::Command(CommandOption::Docs)),
             Some(["COMMAND" | "commands"])                  => Ok(ServerManagement::Command(CommandOption::Empty)),
@@ -126,9 +127,9 @@ impl TryFrom<Message> for ServerManagement {
 }
 
 /* In generic.rs too? */
-impl TryFrom<Message> for Generic {
+impl TryFrom<&Message> for Generic {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["KEYS" | "keys", pattern]) =>
                 Ok(Generic::Keys(pattern.to_string())),
@@ -164,9 +165,9 @@ impl TryFrom<Message> for Generic {
     }
 }
 
-impl TryFrom<Message> for lists::ListApi {
+impl TryFrom<&Message> for lists::ListApi {
     type Error = io::Error;
-    fn try_from(value: Message) -> Result<Self, Self::Error> {
+    fn try_from(value: &Message) -> Result<Self, Self::Error> {
         match value.try_as_bulk_array().as_deref() {
             Some(["LRANGE" | "lrange", key, start, stop]) =>
                 Ok(lists::ListApi::Range(
@@ -210,9 +211,9 @@ impl TryFrom<Message> for lists::ListApi {
     }
 }
 
-impl TryFrom<Message> for keyvalues::StringsApi {
+impl TryFrom<&Message> for keyvalues::StringsApi {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["SET" | "set", key, value]) =>
                 Ok(keyvalues::StringsApi::Set(key.to_string(), value.to_string())),
@@ -226,9 +227,9 @@ impl TryFrom<Message> for keyvalues::StringsApi {
     }
 }
 
-impl TryFrom<Message> for sorted_sets::SortedSetApi {
+impl TryFrom<&Message> for sorted_sets::SortedSetApi {
     type Error = io::Error;
-    fn try_from(command: Message) -> Result<Self, Self::Error> {
+    fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["ZADD" | "zadd", key, args @ ..]) => {
                 let (options, entries) = sorted_sets::AddOptions::parse(args);

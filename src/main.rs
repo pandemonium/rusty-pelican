@@ -8,6 +8,7 @@ mod server;
 mod ttl;
 mod tx_log;
 mod snapshots;
+mod globs;
 
 use std::io;
 

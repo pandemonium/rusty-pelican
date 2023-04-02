@@ -3,7 +3,9 @@ use crate::commands;
 use crate::core;
 use crate::resp;
 use std::time;
+
 use crate::resp::Message;
+use crate::globs;
 
 pub enum ScanResult {
     Complete(Vec<String>),
@@ -23,6 +25,12 @@ impl ScanResult {
 
     fn chunk(offset: usize, content: Vec<&str>) -> ScanResult {
         Self::Chunk(offset, Self::to_owned(content))
+    }
+
+    fn get_data(&self) -> Vec<String> {
+        match self {
+            Self::Complete(xs) | Self::Chunk(_, xs) => xs.to_vec(),
+        }
     }
 }
 
@@ -71,26 +79,35 @@ impl Generic for core::Domain {
         }
     }
 
-    fn filter_keys(&self, _pattern: &str) -> Vec<String> {
+    fn filter_keys(&self, pattern: &str) -> Vec<String> {
+        let glob = globs::Glob::new(pattern);
         self.strings.keys()
             .chain(self.lists.keys())
-            .filter_map(|s| /* FIXME! Eval glob pattern. */ Some(s.to_string()))
+            .filter_map(|s| glob.as_ref().and_then(|p| p.matches(s).then(|| s.to_string())))
             .collect()
     }
 
     fn scan_keys(
         &self, 
         cursor: usize, 
-        _pattern: Option<&str>, 
+        pattern: Option<&str>, 
         count: Option<usize>,
         _tpe: Option<&str>
     ) -> ScanResult {
         let combined_size = self.strings.len() + self.lists.len();
         let count = count.unwrap_or(ScanResult::DEFAULT_CHUNK_SIZE);
-        let content = self.strings.keys().chain(self.lists.keys())
-                          .skip(cursor).take(count)
-                          .filter_map(|s| /* Eval pattern glob. */ Some(s.as_str()))
-                          .collect::<Vec<&str>>();
+        let glob = pattern.and_then(globs::Glob::new);
+        let content =
+            self.strings.keys().chain(self.lists.keys())
+                .skip(cursor).take(count)
+                .filter_map(|s|
+                      if let Some(g) = glob.as_ref() {
+                          g.matches(s).then(|| s.as_str())
+                      } else {
+                          Some(s.as_str())
+                      }
+                 )
+                .collect::<Vec<&str>>();
         if cursor + count > combined_size {
             ScanResult::complete(content)
         } else {
@@ -168,5 +185,57 @@ pub fn apply(
                      .type_of_key(&key.to_string())
                      .unwrap_or("none".to_string())
             )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core;
+    use crate::datatype::keyvalues::KeyValues;
+    use crate::datatype::lists::Lists;
+    use crate::ttl;
+    use crate::tx_log;
+    
+    fn make_domain() -> Result<core::Domain, io::Error> {
+        Ok(tx_log::LoggedTransactions::new(
+            ttl::Lifetimes::new(core::Dataset::empty())
+        )?)
+    }
+
+    #[test]
+    fn filter_keys() {
+        let mut st = make_domain().unwrap();
+        st.set("users:427", "value");
+        st.set("users:428", "value2");
+        st.append("sweden:users", "element", false);
+        st.append("sweden:users:429", "element", false);
+
+        let filter = |pat: &str| {
+            let mut xs = st.filter_keys(pat);
+            xs.sort();
+            xs
+        };
+
+        assert_eq!(filter("users:*"), vec!["users:427", "users:428"]);
+        assert_eq!(filter("*users"), vec!["sweden:users"]);
+    }
+
+    #[test]
+    fn scan() {
+        let mut st = make_domain().unwrap();
+        st.set("users:427", "value");
+        st.set("users:428", "value2");
+        st.append("sweden:users", "element", false);
+        st.append("sweden:users:429", "element", false);
+
+        let filter = |pat: &str| {
+            let mut xs = st.scan_keys(0, Some(pat), None, None).get_data();
+            xs.sort();
+            xs
+        };
+
+        assert_eq!(filter("users:*"), vec!["users:427", "users:428"]);
+        assert_eq!(filter("*users"), vec!["sweden:users"]);
     }
 }

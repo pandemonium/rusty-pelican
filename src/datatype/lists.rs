@@ -24,7 +24,7 @@ pub trait Lists {
 
     /* This has a tri-state error condition. More datatypes probably do - solve 
        this with a domain level-error type. */
-    fn set(&mut self, key: &str, index: usize, element: &str) -> bool;
+    fn set_element(&mut self, key: &str, index: usize, element: &str) -> bool;
     fn length(&self, key: &str) -> usize;
 }
 
@@ -79,7 +79,7 @@ impl Lists for core::Domain {
         self.length(key)
     }
 
-    fn set(&mut self, key: &str, index: usize, element: &str) -> bool {
+    fn set_element(&mut self, key: &str, index: usize, element: &str) -> bool {
         matches!(
             self.lists
                 .entry(key.to_string())
@@ -125,7 +125,7 @@ pub fn apply(
         },
         ListApi::Set(key, index, element) => {
             state.apply_transaction(&command, |data| {
-                if data.set(key, *index, element) {
+                if data.set_element(key, *index, element) {
                     resp::Message::SimpleString("OK".to_string())
                 } else {
                     resp::Message::Error {
@@ -193,9 +193,9 @@ mod tests {
     #[test]
     fn set() {
         let mut st = make_domain().unwrap();
-        assert_eq!(st.set("key", 0, "element3"), false);
+        assert_eq!(st.set_element("key", 0, "element3"), false);
         st.append("key", "element2", false);
-        assert_eq!(st.set("key", 0, "element"), true);
+        assert_eq!(st.set_element("key", 0, "element"), true);
         assert_eq!(st.range("key", 0, 10), vec!["element".to_string()]);
     }
 
