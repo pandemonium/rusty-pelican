@@ -244,15 +244,17 @@ pub fn apply(
                     .as_slice()
             )),
         SortedSetApi::Rank(key, member) =>
-            Ok(resp::Message::Integer(
-                state.for_reading()?.member_stats(key, member)
-                     .map(|stat| stat.rank).unwrap_or(0) as i64
-            )),
+            if let Some(stat) = state.for_reading()?.member_stats(key, member) {
+                Ok(resp::Message::Integer(stat.rank as i64))
+            } else {
+                Ok(resp::Message::Nil)
+            },
         SortedSetApi::Score(key, member) =>
-            Ok(resp::Message::BulkString(
-                state.for_reading()?.member_stats(key, member)
-                    .map(|stat| stat.score).unwrap_or(0f64).to_string()
-            )),
+            if let Some(stat) = state.for_reading()?.member_stats(key, member) {
+                Ok(resp::Message::BulkString(stat.score.to_string()))
+            } else {
+                Ok(resp::Message::Nil)
+            },
 }
 }
 
