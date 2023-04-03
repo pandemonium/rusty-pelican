@@ -11,7 +11,7 @@ use base64::{
     engine::general_purpose::STANDARD_NO_PAD as base64_codec
 };
 
-use crate::resp;
+use crate::core::resp;
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct Revision(usize);

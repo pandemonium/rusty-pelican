@@ -70,9 +70,7 @@ fn find_all(in_path: &path::Path, snapshots: &mut Vec<SnapshotFile>) -> Result<(
 
     for dir in fs::read_dir(in_path)? {
         if let Some(snapshot) = mk_snapshot_file(&pattern, &dir?.path()) {
-            snapshots.push(snapshot)
-        } else {
-            continue
+            snapshots.push(snapshot);
         }
     }
 

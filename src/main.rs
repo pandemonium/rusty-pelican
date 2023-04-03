@@ -1,24 +1,21 @@
-mod resp;
 mod commands;
 mod core;
-mod datatype;
 mod generic;
 mod connections;
 mod server;
-mod ttl;
-mod tx_log;
-mod snapshots;
 mod globs;
 
 use std::io;
 
+use crate::core::domain::ttl;
+
 fn main() -> Result<(), io::Error> {
-    let state = tx_log::LoggedTransactions::new(
+    let state = core::tx_log::LoggedTransactions::new(
         ttl::Lifetimes::new(core::Dataset::empty())
     )?;
 
     println!("Starting ...");
-    let mut domain = core::DomainContext::new(state)?;
+    let mut domain = core::DomainContext::new(state);
     domain.restore()?;
 
     println!("Running.");

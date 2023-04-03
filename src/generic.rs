@@ -1,11 +1,11 @@
 use std::io;
-use crate::commands;
-use crate::core;
-use crate::resp;
 use std::time;
 
-use crate::resp::Message;
+use crate::commands;
+use crate::core;
+use crate::core::resp;
 use crate::globs;
+use resp::Message;
 
 pub enum ScanResult {
     Complete(Vec<String>),
@@ -15,15 +15,15 @@ pub enum ScanResult {
 impl ScanResult {
     const DEFAULT_CHUNK_SIZE: usize = 10;
 
-    fn to_owned(xs: Vec<&str>) -> Vec<String> {
+    fn to_owned(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|&x| x.into()).collect()   
     }
 
-    fn complete(content: Vec<&str>) -> ScanResult {
+    fn complete(content: &[&str]) -> ScanResult {
         Self::Complete(Self::to_owned(content))
     }
 
-    fn chunk(offset: usize, content: Vec<&str>) -> ScanResult {
+    fn chunk(offset: usize, content: &[&str]) -> ScanResult {
         Self::Chunk(offset, Self::to_owned(content))
     }
 
@@ -37,14 +37,14 @@ impl ScanResult {
 
 impl From<ScanResult> for Message {
     fn from(scan: ScanResult) -> Self {
-        fn make_reply_message(cursor: usize, content: Vec<String>) -> Message {
-            let content = Message::make_bulk_array(content.as_slice());
+        fn make_reply_message(cursor: usize, content: &[String]) -> Message {
+            let content = Message::make_bulk_array(content);
             Message::make_array(vec![Message::Integer(cursor as i64), content])
         }
 
         match scan {
-            ScanResult::Complete(xs)      => make_reply_message(0, xs),
-            ScanResult::Chunk(cursor, xs) => make_reply_message(cursor, xs),
+            ScanResult::Complete(xs)      => make_reply_message(0, &xs),
+            ScanResult::Chunk(cursor, xs) => make_reply_message(cursor, &xs),
         }
     }
 }
@@ -82,16 +82,15 @@ impl Generic for core::Domain {
 
     fn filter_keys(&self, pattern: &str) -> Vec<String> {
         let glob = globs::Glob::new(pattern);
-        self.strings.keys()
-            .chain(self.lists.keys())
+        self.keys()
             .filter_map(|s| glob.as_ref().and_then(|p| p.matches(s).then(|| s.to_string())))
             .collect()
     }
 
     fn scan_keys(
-        &self, 
-        cursor: usize, 
-        pattern: Option<&str>, 
+        &self,
+        cursor: usize,
+        pattern: Option<&str>,
         count: Option<usize>,
         _tpe: Option<&str>
     ) -> ScanResult {
@@ -99,7 +98,7 @@ impl Generic for core::Domain {
         let count = count.unwrap_or(ScanResult::DEFAULT_CHUNK_SIZE);
         let glob = pattern.and_then(globs::Glob::new);
         let content =
-            self.strings.keys().chain(self.lists.keys())
+            self.keys()
                 .skip(cursor).take(count)
                 .filter_map(|s|
                       if let Some(g) = glob.as_ref() {
@@ -110,9 +109,9 @@ impl Generic for core::Domain {
                  )
                 .collect::<Vec<&str>>();
         if cursor + count > combined_size {
-            ScanResult::complete(content)
+            ScanResult::complete(&content)
         } else {
-            ScanResult::chunk(cursor + count + 1, content)
+            ScanResult::chunk(cursor + count + 1, &content)
         }
     }
 
@@ -121,6 +120,8 @@ impl Generic for core::Domain {
             Some("string".to_string())
         } else if self.lists.contains_key(key) {
             Some("list".to_string())
+        } else if self.sorted_sets.contains_key(key) {
+            Some("zset".to_string())
         } else {
             None
         }
@@ -193,10 +194,10 @@ pub fn apply(
 mod tests {
     use super::*;
     use crate::core;
-    use crate::datatype::keyvalues::KeyValues;
-    use crate::datatype::lists::Lists;
+    use crate::core::domain::keyvalues::KeyValues;
+    use crate::core::domain::lists::Lists;
     use crate::ttl;
-    use crate::tx_log;
+    use crate::core::tx_log;
     
     fn make_domain() -> Result<core::Domain, io::Error> {
         Ok(tx_log::LoggedTransactions::new(

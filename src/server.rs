@@ -1,9 +1,9 @@
 use std::io;
 use crate::commands;
 use crate::core;
-use crate::resp;
+use crate::core::resp;
 use crate::generic::*;
-use crate::snapshots::Snapshots;
+use crate::core::snapshots::Snapshots;
 
 pub fn apply(
     state:   &core::DomainContext,

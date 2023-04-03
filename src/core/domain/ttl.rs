@@ -40,7 +40,7 @@ impl <Underlying: Expungeable + Serialize> Lifetimes<Underlying> {
         while let Some((expires, key)) = self.expires.pop_first() {
             let expires_at = self.ttls.get(&key).unwrap_or(&expires);
             if expires_at < now {
-                println!("expunge_expired: key={:?}", key);
+                println!("expunge_expired: key={key:?}");
                 self.underlying.expunge(&key);
             } else {
                 self.expires.insert(*expires_at, key);
@@ -76,8 +76,8 @@ mod tests {
     use std::io;
     use super::*;
     use crate::core;
-    use crate::datatype::keyvalues::*;
-    use crate::tx_log;
+    use crate::core::domain::keyvalues::*;
+    use crate::core::tx_log;
     use crate::ttl;
 
     fn make_domain() -> Result<core::Domain, io::Error> {

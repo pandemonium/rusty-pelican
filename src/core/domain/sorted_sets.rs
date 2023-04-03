@@ -4,7 +4,7 @@ use std::collections;
 use serde::*;
 
 use crate::core;
-use crate::resp;
+use crate::core::resp;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SortedSetApi {
@@ -80,7 +80,7 @@ impl Default for AddOptions {
 }
 
 impl AddOptions {
-    fn select_return(p: AddOptions, q: AddOptions, merge: MergePolicy) -> Self {
+    fn select_return(p: &AddOptions, q: &AddOptions, merge: MergePolicy) -> Self {
         if p.and_return == Return::Changed || q.and_return == Return::Changed {
             Self { merge, and_return: Return::Changed }
         } else {
@@ -110,14 +110,13 @@ impl AddOptions {
         )
     }
 
-    fn combine(lhs: Self, rhs: Self) -> Self {
+    fn combine(lhs: Self, rhs: &Self) -> Self {
         match (lhs.merge_policy(), rhs.merge_policy()) {
-            (MergePolicy::AddOrUpdate(when), MergePolicy::Require(Only::UpdateExisting)) =>
-                Self::select_return(lhs.clone(), rhs.clone(), MergePolicy::UpdateExisting(when.clone())),
+            (MergePolicy::AddOrUpdate(when), MergePolicy::Require(Only::UpdateExisting)) |
             (MergePolicy::Require(Only::UpdateExisting), MergePolicy::AddOrUpdate(when)) =>
-                Self::select_return(lhs, rhs.clone(), MergePolicy::UpdateExisting(when.clone())),
+                Self::select_return(&lhs, rhs, MergePolicy::UpdateExisting(when.clone())),
             otherwise =>
-                Self::return_default(MergePolicy::Diverged(format!("bad options: {:?}", otherwise))),
+                Self::return_default(MergePolicy::Diverged(format!("bad options: {otherwise:?}"))),
         }
     }
 }
@@ -136,14 +135,14 @@ impl AddArgsParser {
         let mut options = vec![];
         for word in phrase {
             if !self.entries.is_empty() {
-                self.entries.push(word.to_string());
+                self.entries.push((*word).to_string());
             } else if let Some(option) = AddOptions::parse(word) {
                 options.push(option);
             } else {
-                self.entries.push(word.to_string());
+                self.entries.push((*word).to_string());
             }
         }
-        self.options = options.iter().cloned().fold(Default::default(), AddOptions::combine);
+        self.options = options.iter().fold(AddOptions::default(), AddOptions::combine);
     }
 }
 
@@ -179,14 +178,14 @@ impl SortedSet for core::Domain {
         let mut count = 0;
         self.sorted_sets
             .entry(key.into()).and_modify(|xs|
-                entries.iter().cloned().for_each(|(score, member)| {
+                entries.iter().copied().for_each(|(score, member)| {
                     xs.merge(score, member);
                     count += 1;
                 })
              )
             .or_insert_with(|| {
                 let mut xs = OrderedScores::new();
-                entries.iter().cloned().for_each(|(score, member)| {
+                entries.iter().copied().for_each(|(score, member)| {
                     xs.merge(score, member);
                     count += 1;
                 });

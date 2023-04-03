@@ -32,7 +32,7 @@ impl Display for ErrorPrefix {
 impl From<ErrorPrefix> for String {
     fn from(value: ErrorPrefix) -> Self {
         match value {
-            ErrorPrefix::Empty       => "".to_string(),
+            ErrorPrefix::Empty       => String::new(),
             ErrorPrefix::Err         => "ERR".to_string(),
             ErrorPrefix::Named(name) => name,
         }
@@ -52,14 +52,13 @@ pub enum Message {
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Message::SimpleString(s) => write!(f, "{s}"),
+            Message::SimpleString(s) | Message::BulkString(s) => write!(f, "{s}"),
             Message::Error { prefix, message } => write!(f, "(error) {prefix} {message}."),
             Message::Integer(i) => write!(f, "{i}"),
-            Message::BulkString(s) => write!(f, "{s}"),
             Message::Array(xs) => {
                 write!(f, "Array({}", xs.len())?;
                 for (x, i) in xs.iter().zip(0..) {
-                    write!(f, "({i}){x},")?
+                    write!(f, "({i}){x},")?;
                 }
                 write!(f, ")")?;
                 Ok(())  /* No other construct here? */
@@ -80,7 +79,7 @@ impl From<Message> for String {
             Message::Integer(i) => format!(":{i}\r\n"),
             Message::BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s),
             Message::Array(elements) => {
-                let xs: Vec<String> = elements.into_iter().map(|s| s.into()).collect();
+                let xs: Vec<String> = elements.into_iter().map(Into::into).collect();
                 format!("*{}\r\n{}", xs.len(), xs.join(""))
             },
             Message::Nil => "$-1\r\n".to_string(),
@@ -144,7 +143,7 @@ impl Message {
     pub fn try_as_bulk_array(&self) -> Option<Vec<&str>> {
         self.as_array_contents()?
             .iter()
-            .map(|v| v.try_as_bulk_string_content())
+            .map(Message::try_as_bulk_string_content)
             .collect()
     }
 }
@@ -165,7 +164,7 @@ pub mod parser {
         }
 
         pub fn add_token(&mut self, token: Token) {
-            self.tokens.push(token)
+            self.tokens.push(token);
         }
 
         fn end_of_file<A>() -> Result<A, Error> {
@@ -182,8 +181,6 @@ pub mod parser {
 
                         if let Some(message) = self.try_parse_message() {
                             break Ok(message)
-                        } else {
-                            continue
                         }
                     },
                     Some(Err(e)) => break Err(e),
@@ -214,9 +211,9 @@ pub mod parser {
     impl Token {
         fn raw_image(&self) -> &str {
             match self {
-                Token::Literal(image)                  => image,
-                Token::Trivial    { parsed: _, image } => image,
-                Token::BulkString { parsed: _, image } => image,
+                Token::Literal(image)                  |
+                Token::Trivial    { parsed: _, image } |
+                Token::BulkString { parsed: _, image } |
                 Token::Array      { parsed: _, image } => image,
             }
         }
@@ -258,12 +255,12 @@ pub mod parser {
         }
 
         pub fn parse(line: &str) -> Token {
-            if !line.is_empty() {
+            if line.is_empty() {
+                Token::Literal(String::new())
+            } else {
                 let prefix = &line[0..1];
                 let suffix = &line[1..];
-                Token::produce(prefix, suffix, line)
-            } else {
-                Token::Literal("".to_string())
+                Token::produce(prefix, suffix, line)                
             }
         }
     }
@@ -309,7 +306,7 @@ pub mod parser {
             [Token::Array { parsed: _, image: _ }, tail @ ..] =>
                 (Ok(Message::Nil), tail),
             _ => {
-                let message = format!("Will not parse token stream: {:?}", input);
+                let message = format!("Will not parse token stream: {input:?}");
                 (Err(Error::new(ErrorKind::InvalidData, message)), input)
             },
         }

@@ -1,3 +1,8 @@
+pub mod snapshots;
+pub mod tx_log;
+pub mod domain;
+pub mod resp;
+
 use std::collections;
 use std::thread;
 use std::sync;
@@ -8,18 +13,16 @@ use std::ops::Deref;
 use serde::{Serialize, Deserialize};
 
 use crate::commands::*;
-use crate::resp::*;
-use crate::datatype::*;
+use domain::*;
+use ttl::Lifetimes;
 use crate::generic;
 use crate::connections;
 use crate::server;
-use crate::snapshots;
 use crate::ttl;
-use crate::ttl::Lifetimes;
-use crate::tx_log;
-use crate::tx_log::WriteTransactionSink;
-use crate::snapshots::Snapshots;
-use parser::*;
+use tx_log::WriteTransactionSink;
+use snapshots::Snapshots;
+use resp::*;
+use resp::parser::*;
 
 pub type Domain = tx_log::LoggedTransactions<ttl::Lifetimes<Dataset>>;
 
@@ -27,10 +30,10 @@ pub type Domain = tx_log::LoggedTransactions<ttl::Lifetimes<Dataset>>;
 pub struct DomainContext(sync::Arc<sync::RwLock<Domain>>);
 
 impl DomainContext {
-    pub fn new(domain: Domain) -> Result<Self, io::Error> {
+    pub fn new(domain: Domain) -> Self {
         /* Is Arc really needed here? It's not really passed around.
            RwLock is not clonable. Replace Arc with Box perhaps. */
-        Ok(Self(sync::Arc::new(sync::RwLock::new(domain))))
+        Self(sync::Arc::new(sync::RwLock::new(domain)))
     }
 
     pub fn for_reading(&self) -> Result<sync::RwLockReadGuard<Domain>, io::Error> {
@@ -109,7 +112,7 @@ impl snapshots::Snapshots for Lifetimes<Dataset> {
 
     fn restore_from_snapshot(&mut self) -> Result<(), io::Error> {
         if let Some(snapshot) = snapshots::most_recent()? {
-            *self = snapshot.get::<Self>()?
+            *self = snapshot.get::<Self>()?;
         }
         Ok(())
     }
@@ -127,7 +130,7 @@ type Keyed<A> = collections::HashMap<String, A>;
 pub struct Dataset {
     pub lists:       Keyed<collections::VecDeque<String>>,
     pub strings:     Keyed<String>,
-    pub sorted_sets: Keyed<sorted_sets::OrderedScores>,
+    pub sorted_sets: Keyed<domain::sorted_sets::OrderedScores>,
     revision:        tx_log::Revision,
 }
 
@@ -144,8 +147,16 @@ impl Dataset {
     pub fn revision(&self) -> tx_log::Revision { self.revision.clone() }
 
     pub fn bump_revision(&mut self) {
-        self.revision = self.revision().succeeding()
-    }    
+        self.revision = self.revision().succeeding();
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.lists.keys().chain(
+            self.strings.keys().chain(
+                self.sorted_sets.keys()
+            )
+        )
+    }
 }
 
 trait Executive {
@@ -160,7 +171,6 @@ pub struct CommandContext<A: Clone> {
 
 impl <A: Clone> Deref for CommandContext<A> {
     type Target = A;
-
     fn deref(&self) -> &Self::Target {
         &self.command
     }
@@ -222,7 +232,7 @@ impl RunLoop {
                 Ok(socket) => {
                     thread::spawn(move || Self::handle_connection(&state, &socket));
                 },
-                Err(e) => println!("execute: Error `{}`.", e),
+                Err(e) => println!("execute: Error `{e}`."),
             }
         }
         Ok(())
@@ -234,9 +244,9 @@ impl RunLoop {
         loop {
             let response = Self::handle_command(state, &mut reader)?;
 
-            println!("handle_request: responding with `{}`.", response);
+            println!("handle_request: responding with `{response}`.");
             writer.write_all(String::from(response).as_bytes())?;
-            writer.flush()?
+            writer.flush()?;
         }
     }
 

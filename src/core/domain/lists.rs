@@ -4,7 +4,7 @@ use std::time;
 use std::collections;
 
 use crate::core;
-use crate::resp;
+use crate::core::resp;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ListApi {
@@ -85,7 +85,7 @@ impl Lists for core::Domain {
                 .entry(key.to_string())
                 .and_modify(|list|
                     if let Some(existing) = list.get_mut(index) {
-                        *existing = element.to_string()
+                        *existing = element.to_string();
                     }
                  ),
             collections::hash_map::Entry::Occupied(_)
@@ -148,7 +148,7 @@ mod tests {
     use std::collections::VecDeque;
     use crate::core;
     use crate::ttl;
-    use crate::tx_log;
+    use crate::core::tx_log;
     use super::Lists;
 
     fn make_domain() -> Result<core::Domain, io::Error> {

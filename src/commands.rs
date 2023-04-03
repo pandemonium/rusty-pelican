@@ -3,8 +3,8 @@ use std::io;
 use std::fmt;
 use std::str;
 
-use crate::resp::*;
-use crate::datatype::*;
+use crate::core::resp::*;
+use crate::core::domain::*;
 
 
 #[derive(Clone, Debug, PartialEq)]
@@ -239,7 +239,7 @@ impl TryFrom<&Message> for sorted_sets::SortedSetApi {
                         [score, member] => 
                             Command::decode(score).map(|score: f64| (score, member.to_string())),
                         bad_company =>
-                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad format {:?}", bad_company)))
+                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad format {bad_company:?}")))
                     }
                 }).collect::<Result<Vec<_>, Self::Error>>()?;
 

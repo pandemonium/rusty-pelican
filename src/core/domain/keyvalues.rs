@@ -2,7 +2,7 @@ use std::collections;
 use std::io;
 
 use crate::core;
-use crate::resp;
+use crate::core::resp;
 use std::time;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -20,19 +20,19 @@ pub trait KeyValues {
 
 fn string_prefix(xs: &collections::VecDeque<String>) -> String {
     xs.iter().take(5)
-      .map(|s| s.to_string()).collect::<Vec<_>>()
+      .map(ToString::to_string).collect::<Vec<_>>()
       .join(",")
 }
 
 impl KeyValues for core::Domain {
     fn set(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_string(), value.to_string());
-        self.expunge_expired(&time::SystemTime::now())
+        self.expunge_expired(&time::SystemTime::now());
     }
 
     fn get(&self, key: &str) -> Result<String, io::Error> {
         self.strings
-            .get(key).map(|s| s.to_string())
+            .get(key).map(ToString::to_string)
             .or_else(|| self.lists.get(key).map(string_prefix))
             .ok_or(io::Error::new(io::ErrorKind::NotFound, key))
     }
@@ -73,7 +73,7 @@ pub fn apply(
 mod tests {
     use super::*;
     use crate::core;
-    use crate::tx_log;
+    use crate::core::tx_log;
     use crate::ttl;
     use collections::VecDeque;
 
