@@ -232,17 +232,18 @@ impl TryFrom<&Message> for sorted_sets::SortedSetApi {
     fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["ZADD" | "zadd", key, args @ ..]) => {
-                let (options, entries) = sorted_sets::AddOptions::parse(args);
-                let entries = entries.windows(2).map(|pär| {
+                let mut state = sorted_sets::AddArgsParser::new();
+                state.parse_into(args);
+                let entries = state.entries.chunks(2).map(|pär| {
                     match pär {
-                        [score, member] =>
+                        [score, member] => 
                             Command::decode(score).map(|score: f64| (score, member.to_string())),
                         bad_company =>
-                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad format {:?}", bad_company))),
+                            Err(io::Error::new(io::ErrorKind::InvalidInput, format!("bad format {:?}", bad_company)))
                     }
                 }).collect::<Result<Vec<_>, Self::Error>>()?;
 
-                Ok(sorted_sets::SortedSetApi::Add { key: key.to_string(), entries, options, })
+                Ok(sorted_sets::SortedSetApi::Add { key: key.to_string(), entries, options: state.options, })
             }
             Some(["ZRANGE" | "zrange", key, start, stop, "BYSCORE" | "byscore"]) => {
                 Ok(sorted_sets::SortedSetApi::RangeByScore(

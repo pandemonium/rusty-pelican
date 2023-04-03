@@ -2,7 +2,7 @@ pub struct Glob(regex::Regex);
 
 impl Glob {
     pub fn new(pattern: &str) -> Option<Self> {
-        let mut buf = String::from(pattern).replace("*", ".+");
+        let mut buf = String::from(pattern).replace('*', ".+");
         buf.insert(0, '^');
         buf.push('$');
 

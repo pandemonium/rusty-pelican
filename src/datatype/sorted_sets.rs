@@ -1,4 +1,5 @@
 use std::io;
+use std::cmp;
 use std::collections;
 use serde::*;
 
@@ -80,13 +81,11 @@ impl Default for AddOptions {
 
 impl AddOptions {
     fn select_return(p: AddOptions, q: AddOptions, merge: MergePolicy) -> Self {
-        let and_return = if p.and_return == Return::Changed || q.and_return == Return::Changed {
-            Return::Changed
+        if p.and_return == Return::Changed || q.and_return == Return::Changed {
+            Self { merge, and_return: Return::Changed }
         } else {
-            Return::default()
-        };
-
-        Self { merge, and_return }
+            Self { merge, and_return: Return::default() }
+        }
     }
 
     fn merge_policy(&self) -> &MergePolicy {
@@ -100,17 +99,18 @@ impl AddOptions {
     fn return_changed(merge: MergePolicy) -> Self {
         Self { merge, and_return: Return::Changed }
     }
-    fn is_recognized(word: &str) -> bool {
-        When::parse(word).is_some() || Only::parse(word).is_some() || Return::parse(word).is_some()
+
+    fn parse(word: &str) -> Option<Self> {
+        When::parse(word).map(|when|
+            Self::return_default(MergePolicy::AddOrUpdate(when))
+        ).or_else(||
+            Only::parse(word).map(|only| Self::return_default(MergePolicy::Require(only)))
+        ).or_else(||
+            Return::parse(word).map(|_| Self::return_changed(MergePolicy::Default))
+        )
     }
 
-    fn produce_option(word: &str) -> Option<Self> {
-        When::parse(word).map(|x| Self::return_default(MergePolicy::AddOrUpdate(x)))
-            .or_else(|| Only::parse(word).map(|x| Self::return_default(MergePolicy::Require(x))))
-            .or_else(|| Return::parse(word).map(|_| Self::return_changed(MergePolicy::Default)))
-    }
-
-    fn combine_options(lhs: Self, rhs: Self) -> Self {
+    fn combine(lhs: Self, rhs: Self) -> Self {
         match (lhs.merge_policy(), rhs.merge_policy()) {
             (MergePolicy::AddOrUpdate(when), MergePolicy::Require(Only::UpdateExisting)) =>
                 Self::select_return(lhs.clone(), rhs.clone(), MergePolicy::UpdateExisting(when.clone())),
@@ -120,17 +120,31 @@ impl AddOptions {
                 Self::return_default(MergePolicy::Diverged(format!("bad options: {:?}", otherwise))),
         }
     }
+}
 
-    pub fn parse(phrase: &[&str]) -> (Self, Vec<String>) {
-        let mut words = phrase.iter();
-        let option = words.by_ref().cloned()
-            .take_while(|word| Self::is_recognized(word))
-            .filter_map(Self::produce_option)
-            .reduce(Self::combine_options)
-            .unwrap_or_else(|| Self::return_default(MergePolicy::Default));
+pub struct AddArgsParser {
+    pub options: AddOptions,
+    pub entries: Vec<String>,
+}
 
-        (option, words.map(|x| x.to_string()).collect::<Vec<String>>())
-    }    
+impl AddArgsParser {
+    pub fn new() -> Self {
+        Self { options: AddOptions::default(), entries: Vec::new() }
+    }
+
+    pub fn parse_into(&mut self, phrase: &[&str]) {
+        let mut options = vec![];
+        for word in phrase {
+            if !self.entries.is_empty() {
+                self.entries.push(word.to_string());
+            } else if let Some(option) = AddOptions::parse(word) {
+                options.push(option);
+            } else {
+                self.entries.push(word.to_string());
+            }
+        }
+        self.options = options.iter().cloned().fold(Default::default(), AddOptions::combine);
+    }
 }
 
 impl Only {
@@ -161,7 +175,7 @@ pub trait SortedSet {
 }
 
 impl SortedSet for core::Domain {
-    fn add(&mut self, key: &str, entries: &[(f64, &str)], options: AddOptions) -> usize {
+    fn add(&mut self, key: &str, entries: &[(f64, &str)], _options: AddOptions) -> usize {
         let mut count = 0;
         self.sorted_sets
             .entry(key.into()).and_modify(|xs|
@@ -245,10 +259,10 @@ pub fn apply(
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Score(f64);
 impl Ord for Score {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering { self.0.total_cmp(&other.0) }
+    fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.total_cmp(&other.0) }
 }
 impl PartialOrd for Score {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         self.0.partial_cmp(&other.0)
     }
 }
@@ -262,6 +276,9 @@ pub struct OrderedScores {
     member_to_score:  collections::HashMap<String, Score>,
     score_to_members: collections::BTreeMap<Score, collections::BTreeSet<String>>,
 }
+
+use collections::hash_map::Entry as HashEntry;
+use collections::btree_map::Entry as BTreeEntry;
 
 impl OrderedScores {
     fn new() -> Self {
@@ -300,29 +317,29 @@ impl OrderedScores {
             )
     }
 
-    /* Add parameter to control how or if a new score is incorporated. */
+    /* Add parameter to control how or if a new score is incorporated. */    
     fn merge(&mut self, new_score: f64, member: &str) {
         match self.member_to_score.entry(member.into()) {
-            collections::hash_map::Entry::Occupied(mut member_entry) => {
-                let current_score = member_entry.get().clone();
-                /* This begs for a re-think about the if-statement. */
-                if let collections::btree_map::Entry::Occupied(mut score_entry) = self.score_to_members.entry(current_score) {
+            HashEntry::Occupied(mut member_score) => {
+                let score = member_score.get().clone();
+                if let BTreeEntry::Occupied(mut score_entry) = self.score_to_members.entry(score) {
                     let members = score_entry.get_mut();
                     if members.remove(member) && members.is_empty() {
                         score_entry.remove_entry();
                     }
-                    member_entry.insert(Score(new_score));
+                    member_score.insert(Score(new_score));
                     self.score_to_members.entry(Score(new_score))
                         .and_modify(|e| { e.insert(member.into()); })
                         .or_insert_with(|| { collections::BTreeSet::from([ member.into() ]) });    
                 } else {
-                    panic!("member_to_score <=> score_to_member invariant broken")
-                }                        
+                    panic!("member_to_score <=> score_to_member invariant broken; 
+                            member has the score, but scores does not have that member")
+                }
             }
             collections::hash_map::Entry::Vacant(e) => {
                 e.insert(Score(new_score));
                 self.score_to_members.entry(Score(new_score))
-                    .and_modify(|_| { panic!("score_to_member <=> member_to_score invariant broken") })
+                    .and_modify(|e| { e.insert(member.into()); })
                     .or_insert_with(|| { collections::BTreeSet::from([ member.into() ]) });    
             }
         }

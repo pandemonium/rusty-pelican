@@ -27,6 +27,7 @@ impl ScanResult {
         Self::Chunk(offset, Self::to_owned(content))
     }
 
+    #[cfg(test)]
     fn get_data(&self) -> Vec<String> {
         match self {
             Self::Complete(xs) | Self::Chunk(_, xs) => xs.to_vec(),
@@ -102,7 +103,7 @@ impl Generic for core::Domain {
                 .skip(cursor).take(count)
                 .filter_map(|s|
                       if let Some(g) = glob.as_ref() {
-                          g.matches(s).then(|| s.as_str())
+                          g.matches(s).then_some(s.as_str())
                       } else {
                           Some(s.as_str())
                       }
