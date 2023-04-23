@@ -150,53 +150,39 @@ impl Message {
 
 pub mod parser {
     use super::*;
-    use std::io::{Error, ErrorKind, BufRead};
+    use std::io;
+    use io::BufRead;
 
-    pub struct ParseState {
-        tokens: Vec<Token>,
+    fn end_of_file<A>() -> io::Result<A> {
+        Err(Error::new(io::ErrorKind::UnexpectedEof, "end of file"))
     }
 
-    impl ParseState {
-        pub fn empty() -> Self {
-            Self {
-                tokens: vec![],
-            }
-        }
+    pub fn read_message<S: BufRead>(reader: &mut S) -> io::Result<Message> {
+        let mut buffer: Vec<Token> = vec![];
+        let mut lines = reader.lines();
+        loop {
+            match lines.next() {
+                Some(Ok(token_image)) => {
+                    let token = Token::parse(&token_image);
+                    buffer.push(token);
 
-        pub fn add_token(&mut self, token: Token) {
-            self.tokens.push(token);
-        }
-
-        fn end_of_file<A>() -> Result<A, Error> {
-            Err(Error::new(ErrorKind::UnexpectedEof, "end of file"))
-        }
-
-        pub fn parse_message<S: BufRead>(&mut self, reader: &mut S) -> Result<Message, Error> {
-            let mut lines = reader.lines();
-            loop {
-                match lines.next() {
-                    Some(Ok(token_image)) => {
-                        let token = Token::parse(&token_image);
-                        self.add_token(token);
-
-                        if let Some(message) = self.try_parse_message() {
-                            break Ok(message)
-                        }
-                    },
-                    Some(Err(e)) => break Err(e),
-                    None         => break Self::end_of_file(),
-                }
-            }
-        }
-
-        pub fn try_parse_message(&mut self) -> Option<Message> {
-            match parser::parse_message(&self.tokens) {
-                (Ok(it), remaining) => {
-                    self.tokens = remaining.to_vec();
-                    Some(it)
+                    if let Some(message) = try_commit_prefix(&mut buffer) {
+                        break Ok(message)
+                    }
                 },
-                _ => None,
+                Some(Err(e)) => break Err(e),
+                None         => break end_of_file(),
             }
+        }
+    }
+
+    fn try_commit_prefix(buffer: &mut Vec<Token>) -> Option<Message> {
+        match parser::parse_prefix(buffer) {
+            (Ok(message), suffix) => {
+                *buffer = suffix.to_vec();
+                Some(message)
+            },
+            _ => None,
         }
     }
 
@@ -274,7 +260,7 @@ pub mod parser {
         if count == 0 {
             input
         } else {
-            match parse_message(input) {
+            match parse_prefix(input) {
                 (Ok(element), remaining) => {
                     output.push(element);
                     parse_array(count - 1, remaining, output)
@@ -284,7 +270,7 @@ pub mod parser {
         }
     }
 
-    pub fn parse_message(input: &[Token]) -> (Result<Message, Error>, &[Token]) {
+    pub fn parse_prefix(input: &[Token]) -> (Result<Message, Error>, &[Token]) {
         match input {
             [Token::Trivial { parsed, image: _ }, tail @ ..] =>
                 (Ok(parsed. clone()), tail),
@@ -300,14 +286,14 @@ pub mod parser {
                 if elements.len() == requested_length {
                     (Ok(Message::make_array(elements)), remaining)
                 } else {
-                    (Err(Error::new(ErrorKind::InvalidData, "Expected more array elements")), input)
+                    (Err(Error::new(io::ErrorKind::InvalidData, "Expected more array elements")), input)
                 }
             },
             [Token::Array { parsed: _, image: _ }, tail @ ..] =>
                 (Ok(Message::Nil), tail),
             _ => {
                 let message = format!("Will not parse token stream: {input:?}");
-                (Err(Error::new(ErrorKind::InvalidData, message)), input)
+                (Err(Error::new(io::ErrorKind::InvalidData, message)), input)
             },
         }
     }
@@ -317,7 +303,7 @@ pub mod parser {
             phrase.split("\r\n")
                   .map(Token::parse)
                   .collect::<Vec<Token>>();
-        parse_message(&tokens).0
+        parse_prefix(&tokens).0
     }
 }
 

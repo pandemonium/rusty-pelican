@@ -28,7 +28,7 @@ pub trait Lists {
     fn length(&self, key: &str) -> usize;
 }
 
-impl Lists for core::Domain {
+impl Lists for core::State {
     fn range(&self, key: &str, start: i32, stop: i32) -> Vec<String> {
         let length = self.length(key) as i32;
         if start >= length {
@@ -99,13 +99,13 @@ impl Lists for core::Domain {
 }
 
 pub fn apply(
-    state:   &core::DomainContext,
+    state:   &core::StateContext,
     command: core::CommandContext<ListApi>
 ) -> Result<resp::Message, io::Error> {
     match &*command {
         ListApi::Length(key) =>
             Ok(resp::Message::Integer(
-                state.for_reading()?.length(key) as i64
+                state.begin_reading()?.length(key) as i64
             )),
         ListApi::Append(key, elements, to_existing) => {
             state.apply_transaction(&command, |data| {
@@ -137,7 +137,7 @@ pub fn apply(
         },
         ListApi::Range(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range(key, *start, *stop).as_slice()
+                state.begin_reading()?.range(key, *start, *stop).as_slice()
             )),
     }
 }
@@ -147,13 +147,13 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use crate::core;
-    use crate::ttl;
+    use crate::core::domain::ttl;
     use crate::core::tx_log;
     use super::Lists;
 
-    fn make_domain() -> Result<core::Domain, io::Error> {
+    fn make_domain() -> Result<core::State, io::Error> {
         Ok(tx_log::LoggedTransactions::new(
-            ttl::Lifetimes::new(core::Dataset::empty())
+            ttl::Lifetimes::new(core::Datasets::new())
         )?)
     }
 

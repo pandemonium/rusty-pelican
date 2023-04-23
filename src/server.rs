@@ -6,13 +6,13 @@ use crate::generic::*;
 use crate::core::snapshots::Snapshots;
 
 pub fn apply(
-    state:   &core::DomainContext,
-    command: commands::ServerManagement
+    state:   &core::StateContext,
+    command: &commands::ServerManagement
 ) -> Result<resp::Message, io::Error> {
     match command {
         commands::ServerManagement::DbSize =>
             Ok(resp::Message::Integer(
-                state.for_reading()?.filter_keys("*").len() as i64
+                state.begin_reading()?.filter_keys("*").len() as i64
             )),
         commands::ServerManagement::Command(_options) =>
             Ok(resp::Message::Error {
@@ -20,7 +20,7 @@ pub fn apply(
                 message: "Unsupported command".to_string(),
             }),
         commands::ServerManagement::Info(commands::Topic::Keyspace) => {
-            let keys = state.for_reading()?.filter_keys("*");
+            let keys = state.begin_reading()?.filter_keys("*");
             let keyspace = format!("# Keyspace\r\ndb0:keys={},expires=0,avg_ttl=0\r\n", keys.len());
             Ok(resp::Message::BulkString(keyspace))
         },
@@ -36,7 +36,7 @@ pub fn apply(
 //            }),
         commands::ServerManagement::BgSave => {
             /* thread::spawn(move || ... ) */
-            state.for_reading()?.save_snapshot()?;
+            state.begin_reading()?.save_snapshot()?;
             Ok(resp::Message::SimpleString("OK".to_string()))
         },
 }

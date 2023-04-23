@@ -68,7 +68,7 @@ pub trait Generic {
     fn key_exists(&self, key: &str) -> bool;
 }
 
-impl Generic for core::Domain {
+impl Generic for core::State {
     fn get_ttl(&self, key: &str) -> Ttl {
         let now = time::SystemTime::now();
         if let Some(ttl) = self.ttl_remaining(key, &now) {
@@ -145,22 +145,22 @@ impl From<Ttl> for Message {
 }
 
 pub fn apply(
-    state: &core::DomainContext,
+    state: &core::StateContext,
     command: core::CommandContext<commands::Generic>,
 )  -> Result<resp::Message, io::Error> {
     match &*command {
         commands::Generic::Keys(pattern) => 
             Ok(Message::make_bulk_array(
-                state.for_reading()?.filter_keys(pattern).as_slice()
+                state.begin_reading()?.filter_keys(pattern).as_slice()
             )),
         commands::Generic::Scan { cursor, pattern, count, tpe } =>
             Ok(Message::from(
-                state.for_reading()?
+                state.begin_reading()?
                      .scan_keys(*cursor, pattern.as_deref(), *count, tpe.as_deref())
             )),
         commands::Generic::Ttl(key) =>
             Ok(Message::from(
-                state.for_reading()?.get_ttl(key)
+                state.begin_reading()?.get_ttl(key)
             )),
         commands::Generic::Expire(key, ttl) => {
             /* There are return values here. 1 for set, 0 for non-existant key. */
@@ -175,7 +175,7 @@ pub fn apply(
         },
         commands::Generic::Exists(key) =>
             Ok(Message::Integer(
-                if state.for_reading()?.key_exists(&key.to_string()) {
+                if state.begin_reading()?.key_exists(&key.to_string()) {
                     1
                 } else {
                     0
@@ -183,7 +183,7 @@ pub fn apply(
             )),
         commands::Generic::Type(key) =>
             Ok(Message::SimpleString(
-                state.for_reading()?
+                state.begin_reading()?
                      .type_of_key(&key.to_string())
                      .unwrap_or("none".to_string())
             )),
@@ -196,12 +196,12 @@ mod tests {
     use crate::core;
     use crate::core::domain::keyvalues::KeyValues;
     use crate::core::domain::lists::Lists;
-    use crate::ttl;
+    use crate::core::domain::ttl;
     use crate::core::tx_log;
     
-    fn make_domain() -> Result<core::Domain, io::Error> {
+    fn make_domain() -> Result<core::State, io::Error> {
         Ok(tx_log::LoggedTransactions::new(
-            ttl::Lifetimes::new(core::Dataset::empty())
+            ttl::Lifetimes::new(core::Datasets::new())
         )?)
     }
 

@@ -1,24 +1,18 @@
-mod commands;
-mod core;
-mod generic;
-mod connections;
-mod server;
-mod globs;
-
 use std::io;
 
-use crate::core::domain::ttl;
+use rusty_pelican::core::*;
+
 
 fn main() -> Result<(), io::Error> {
-    let state = core::tx_log::LoggedTransactions::new(
-        ttl::Lifetimes::new(core::Dataset::empty())
+    let data = tx_log::LoggedTransactions::new(
+        domain::ttl::Lifetimes::new(Datasets::default())
     )?;
 
     println!("Starting ...");
-    let mut domain = core::DomainContext::new(state);
-    domain.restore()?;
+    let mut state = StateContext::new(data);
+    state.restore_from_disk()?;
 
     println!("Running.");
-    let run_loop = core::RunLoop::new(domain, "127.0.0.1:8080")?;
+    let run_loop = RunLoop::new(state, "127.0.0.1:8080")?;
     run_loop.execute()
 }

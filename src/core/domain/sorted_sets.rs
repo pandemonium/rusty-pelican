@@ -146,6 +146,10 @@ impl AddArgsParser {
     }
 }
 
+impl Default for AddArgsParser {
+    fn default() -> Self { Self::new() }
+}
+
 impl Only {
     fn parse(word: &str) -> Option<Only> {
         match word {
@@ -173,7 +177,7 @@ pub trait SortedSet {
     fn member_stats(&self, key: &str, member: &str) -> Option<MemberEntry>;
 }
 
-impl SortedSet for core::Domain {
+impl SortedSet for core::State {
     fn add(&mut self, key: &str, entries: &[(f64, &str)], _options: AddOptions) -> usize {
         let mut count = 0;
         self.sorted_sets
@@ -182,8 +186,7 @@ impl SortedSet for core::Domain {
                     xs.merge(score, member);
                     count += 1;
                 })
-             )
-            .or_insert_with(|| {
+             ).or_insert_with(|| {
                 let mut xs = OrderedScores::new();
                 entries.iter().copied().for_each(|(score, member)| {
                     xs.merge(score, member);
@@ -218,7 +221,7 @@ impl SortedSet for core::Domain {
 }
 
 pub fn apply(
-    state:   &core::DomainContext,
+    state:   &core::StateContext,
     command: core::CommandContext<SortedSetApi>
 ) -> Result<resp::Message, io::Error> {
     match &*command {
@@ -232,24 +235,24 @@ pub fn apply(
             }),
         SortedSetApi::RangeByRank(key, start, stop) =>
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range_by_rank(key, *start, *stop)
+                state.begin_reading()?.range_by_rank(key, *start, *stop)
                      .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
                      .as_slice()
             )),
         SortedSetApi::RangeByScore(key, start, stop) => 
             Ok(resp::Message::make_bulk_array(
-                state.for_reading()?.range_by_score(key, *start, *stop)
+                state.begin_reading()?.range_by_score(key, *start, *stop)
                     .iter().map(|x| x.member.clone()).collect::<Vec<_>>()
                     .as_slice()
             )),
         SortedSetApi::Rank(key, member) =>
-            if let Some(stat) = state.for_reading()?.member_stats(key, member) {
+            if let Some(stat) = state.begin_reading()?.member_stats(key, member) {
                 Ok(resp::Message::Integer(stat.rank as i64))
             } else {
                 Ok(resp::Message::Nil)
             },
         SortedSetApi::Score(key, member) =>
-            if let Some(stat) = state.for_reading()?.member_stats(key, member) {
+            if let Some(stat) = state.begin_reading()?.member_stats(key, member) {
                 Ok(resp::Message::BulkString(stat.score.to_string()))
             } else {
                 Ok(resp::Message::Nil)

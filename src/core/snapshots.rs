@@ -35,7 +35,7 @@ impl SnapshotFile {
 
 pub trait Snapshots {
     fn save_snapshot(&self) -> Result<(), io::Error>;
-    fn restore_from_snapshot(&mut self) -> Result<(), io::Error>;
+    fn restore_most_recent_snapshot(&mut self) -> Result<(), io::Error>;
 }
 
 fn mk_snapshot_file(index: usize) -> SnapshotFile {

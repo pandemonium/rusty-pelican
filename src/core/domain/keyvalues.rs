@@ -24,9 +24,10 @@ fn string_prefix(xs: &collections::VecDeque<String>) -> String {
       .join(",")
 }
 
-impl KeyValues for core::Domain {
+impl KeyValues for core::State {
     fn set(&mut self, key: &str, value: &str) {
         self.strings.insert(key.to_string(), value.to_string());
+        /* These ought to be somewhere else, really. */
         self.expunge_expired(&time::SystemTime::now());
     }
 
@@ -45,7 +46,7 @@ impl KeyValues for core::Domain {
 }
 
 pub fn apply(
-    state: &core::DomainContext,
+    state: &core::StateContext,
     command: core::CommandContext<StringsApi>,
 ) -> Result<resp::Message, io::Error> {
     match &*command {
@@ -57,11 +58,11 @@ pub fn apply(
         },
         StringsApi::Get(key) =>
             Ok(resp::Message::BulkString(
-                state.for_reading()?.get(key)?                
+                state.begin_reading()?.get(key)?                
             )),
         StringsApi::Mget(keys) => {
             let keys = keys.iter().map(|s| s.as_str()).collect();
-            let elements = state.for_reading()?.mget(keys).into_iter().map(|value|
+            let elements = state.begin_reading()?.mget(keys).into_iter().map(|value|
                 value.map_or(resp::Message::Nil, resp::Message::BulkString)
             );
             Ok(resp::Message::make_array(elements.collect()))
@@ -74,12 +75,12 @@ mod tests {
     use super::*;
     use crate::core;
     use crate::core::tx_log;
-    use crate::ttl;
+    use crate::core::domain::ttl;
     use collections::VecDeque;
 
-    fn make_domain() -> Result<core::Domain, io::Error> {
+    fn make_domain() -> Result<core::State, io::Error> {
         Ok(tx_log::LoggedTransactions::new(
-            ttl::Lifetimes::new(core::Dataset::empty())
+            ttl::Lifetimes::new(core::Datasets::new())
         )?)
     }
 

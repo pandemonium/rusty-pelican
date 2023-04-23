@@ -30,8 +30,8 @@ impl <A: Expungeable + Serialize> DerefMut for Lifetimes<A> {
 impl <Underlying: Expungeable + Serialize> Lifetimes<Underlying> {
     pub fn new(underlying: Underlying) -> Self {
         Self {
-            expires:    collections::BTreeMap::new(),
-            ttls:       collections::HashMap::new(),
+            expires: collections::BTreeMap::new(),
+            ttls:    collections::HashMap::new(),
             underlying,
         }
     }
@@ -78,11 +78,11 @@ mod tests {
     use crate::core;
     use crate::core::domain::keyvalues::*;
     use crate::core::tx_log;
-    use crate::ttl;
+    use crate::core::domain::ttl;
 
-    fn make_domain() -> Result<core::Domain, io::Error> {
+    fn make_domain() -> Result<core::State, io::Error> {
         Ok(tx_log::LoggedTransactions::new(
-            ttl::Lifetimes::new(core::Dataset::empty())
+            ttl::Lifetimes::new(core::Datasets::new())
         )?)
     }
 

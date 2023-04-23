@@ -232,7 +232,7 @@ impl TryFrom<&Message> for sorted_sets::SortedSetApi {
     fn try_from(command: &Message) -> Result<Self, Self::Error> {
         match command.try_as_bulk_array().as_deref() {
             Some(["ZADD" | "zadd", key, args @ ..]) => {
-                let mut state = sorted_sets::AddArgsParser::new();
+                let mut state = sorted_sets::AddArgsParser::default();
                 state.parse_into(args);
                 let entries = state.entries.chunks(2).map(|pär| {
                     match pär {

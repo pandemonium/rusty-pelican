@@ -4,8 +4,8 @@ use crate::core;
 use crate::core::resp;
 
 pub fn apply(
-    _state:  &core::DomainContext,
-    command: commands::ConnectionManagement
+    _state:  &core::StateContext,
+    command: &commands::ConnectionManagement
 ) -> Result<resp::Message, io::Error> {
     match command {
         commands::ConnectionManagement::SetClientName(_name) => 
@@ -13,6 +13,6 @@ pub fn apply(
         commands::ConnectionManagement::SelectDatabase(_database) => 
             Ok(resp::Message::SimpleString("OK".to_string())),
         commands::ConnectionManagement::Ping(message) => 
-            Ok(resp::Message::SimpleString(message)),
+            Ok(resp::Message::SimpleString(message.clone())),
     }
 }
