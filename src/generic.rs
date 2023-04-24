@@ -147,7 +147,7 @@ impl From<Ttl> for Message {
 pub fn apply(
     state: &core::StateContext,
     command: core::CommandContext<commands::Generic>,
-)  -> Result<resp::Message, io::Error> {
+)  -> io::Result<resp::Message> {
     match &*command {
         commands::Generic::Keys(pattern) => 
             Ok(Message::make_bulk_array(

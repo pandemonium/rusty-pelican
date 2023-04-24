@@ -52,18 +52,18 @@ pub enum Command {
 }
 
 impl Command {
-    fn wrong_category<A>() -> Result<A, io::Error> {
+    fn wrong_category<A>() -> io::Result<A> {
         Err(io::Error::new(io::ErrorKind::InvalidInput, "Unknown or incomplete command."))
     }
 
-    fn unknown(command: &Message) -> Result<Self, io::Error> {
+    fn unknown(command: &Message) -> io::Result<Self> {
         match command.try_as_bulk_array().as_deref() {
             Some([unknown @ ..]) => Ok(Command::Unknown(unknown.join(" "))),
             _otherwise           => Self::wrong_category(),
         }
     }
 
-    fn decode<A: str::FromStr>(image: &str) -> Result<A, io::Error> 
+    fn decode<A: str::FromStr>(image: &str) -> io::Result<A> 
     where
         A::Err: fmt::Display
     {

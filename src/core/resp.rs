@@ -158,7 +158,7 @@ pub mod parser {
     }
 
     pub fn read_message<S: BufRead>(reader: &mut S) -> io::Result<Message> {
-        let mut buffer: Vec<Token> = vec![];
+        let mut buffer = vec![];
         let mut lines = reader.lines();
         loop {
             match lines.next() {
@@ -253,7 +253,7 @@ pub mod parser {
 
     /* What about this lifetime thing? */
     fn parse_array<'a>(
-        count:  i32, 
+        count:  i32,
         input:  &'a [Token],
         output: &mut Vec<Message>,
     ) -> &'a [Token] {
@@ -274,7 +274,7 @@ pub mod parser {
         match input {
             [Token::Trivial { parsed, image: _ }, tail @ ..] =>
                 (Ok(parsed. clone()), tail),
-            [Token::BulkString { parsed: size, image: _ }, tail @ ..] if *size == -1 => 
+            [Token::BulkString { parsed: size, image: _ }, tail @ ..] if *size == -1 =>
                 (Ok(Message::Nil), tail),
             [Token::BulkString { parsed: size, image: _ }, contents, tail @ ..] =>
                 (Ok(Message::make_bulk_string(*size, contents.raw_image())), tail),

@@ -8,7 +8,7 @@ use crate::core::snapshots::Snapshots;
 pub fn apply(
     state:   &core::StateContext,
     command: &commands::ServerManagement
-) -> Result<resp::Message, io::Error> {
+) -> io::Result<resp::Message> {
     match command {
         commands::ServerManagement::DbSize =>
             Ok(resp::Message::Integer(

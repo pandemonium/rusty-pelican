@@ -6,7 +6,7 @@ use crate::core::resp;
 pub fn apply(
     _state:  &core::StateContext,
     command: &commands::ConnectionManagement
-) -> Result<resp::Message, io::Error> {
+) -> io::Result<resp::Message> {
     match command {
         commands::ConnectionManagement::SetClientName(_name) => 
             Ok(resp::Message::SimpleString("OK".to_string())),

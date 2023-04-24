@@ -3,7 +3,7 @@ use std::io;
 use rusty_pelican::core::*;
 
 
-fn main() -> Result<(), io::Error> {
+fn main() -> io::Result<()> {
     let data = tx_log::LoggedTransactions::new(
         domain::ttl::Lifetimes::new(Datasets::default())
     )?;

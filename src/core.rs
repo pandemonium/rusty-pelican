@@ -36,11 +36,11 @@ impl StateContext {
         Self(sync::Arc::new(sync::RwLock::new(state)))
     }
 
-    pub fn begin_reading(&self) -> Result<sync::RwLockReadGuard<State>, io::Error> {
+    pub fn begin_reading(&self) -> io::Result<sync::RwLockReadGuard<State>> {
         self.0.read().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
-    pub fn begin_writing(&self) -> Result<sync::RwLockWriteGuard<State>, io::Error> {
+    pub fn begin_writing(&self) -> io::Result<sync::RwLockWriteGuard<State>> {
         self.0.write().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
     }
 
@@ -48,7 +48,7 @@ impl StateContext {
         &self, 
         command: &CommandContext<C>,
         unit_of_work: F
-    ) -> Result<A, io::Error>
+    ) -> io::Result<A>
     where 
         F: FnOnce(&mut State) -> A,
         C: Clone,
@@ -61,18 +61,16 @@ impl StateContext {
         Ok(return_value)
     }
 
-    pub fn restore_from_disk(&mut self) -> Result<(), io::Error> {
+    pub fn restore_from_disk(&mut self) -> io::Result<()> {
         self.restore_most_recent_snapshot()?;
         self.apply_transaction_log()
     }
 
-    fn restore_most_recent_snapshot(&mut self) -> Result<(), io::Error> {
+    fn restore_most_recent_snapshot(&mut self) -> io::Result<()> {
         self.begin_writing()?.restore_most_recent_snapshot()
     }
 
-    /* The interaction between the RwLock and getting at the
-       Transaction Log feels off. */
-    fn apply_transaction_log(&self) -> Result<(), io::Error> {
+    fn apply_transaction_log(&self) -> io::Result<()> {
         {   let state = self.begin_reading()?;
             for message in state.transaction_log().replay(&state.revision())?.iter() {
                 self.apply(CommandContext::try_from(&message?)?)?;
@@ -194,14 +192,14 @@ impl Executive for StateContext {
                 sorted_sets::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
             Command::Generic(ref sub_command) =>
                 generic::apply(self, CommandContext::new(sub_command.clone(), command.transaction_message())),
-            Command::ConnectionManagement(ref sub_command) => 
+            Command::ConnectionManagement(ref sub_command) =>
                 connections::apply(self, &sub_command),
-            Command::ServerManagement(ref sub_command) => 
+            Command::ServerManagement(ref sub_command) =>
                 server::apply(self, &sub_command),
             Command::Unknown(ref name) =>
-                Ok(Message::Error { 
+                Ok(Message::Error {
                     prefix: ErrorPrefix::Err,
-                    message: format!("Unsupported command string `{name}`."), 
+                    message: format!("Unsupported command string `{name}`."),
                 }),
         }
     }

@@ -44,7 +44,7 @@ pub trait WriteTransactionSink {
         &mut self, 
         revision: &Revision, 
         message:  &resp::Message
-    ) -> Result<(), io::Error>;
+    ) -> io::Result<()>;
 }
 
 impl <A> WriteTransactionSink for LoggedTransactions<A> {
@@ -52,7 +52,7 @@ impl <A> WriteTransactionSink for LoggedTransactions<A> {
         &mut self,
         revision: &Revision,
         message:  &resp::Message
-    ) -> Result<(), io::Error> {
+    ) -> io::Result<()> {
         if !self.replaying {
             println!("record_write: appending to transaction log");
             let entry = LogEntry::new(time::SystemTime::now(), revision, message);
@@ -113,7 +113,7 @@ impl ReplayView {
         Self { file, since }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Result<resp::Message, io::Error>> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = io::Result<resp::Message>> + '_ {
         let reader = io::BufReader::new(&self.file);
         reader.lines()
               .map(|record| LogEntry::try_from(record?))
@@ -156,24 +156,24 @@ pub struct LogFile {
 }
 
 impl LogFile {
-    fn new(at: &path::Path) -> Result<Self, io::Error> {
+    fn new(at: &path::Path) -> io::Result<Self> {
         Ok(Self {
             path: at.into(),
             file: fs::File::options().append(true).create(true).open(at)?,
         })
     }
 
-    fn append(&mut self, entry: LogEntry) -> Result<(), io::Error> {
+    fn append(&mut self, entry: LogEntry) -> io::Result<()> {
         let record: String = entry.try_into()?;
         self.file.write_all(format!("{record}\r\n").as_bytes())
         /* if now > fs_sync deadline { file.fs_sync() } */
     }
 
-    fn sync(&self) -> Result<(), io::Error> {
+    fn sync(&self) -> io::Result<()> {
         self.file.sync_all()
     }
 
-    pub fn replay(&self, since: &Revision) -> Result<ReplayView, io::Error> {
+    pub fn replay(&self, since: &Revision) -> io::Result<ReplayView> {
         Ok(ReplayView::new(fs::File::open(&self.path)?, since.clone()))
     }
 }
